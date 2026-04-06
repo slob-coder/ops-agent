@@ -87,6 +87,38 @@ class OpsAgent:
         template = re.sub(r"\{[a-z_]+\}", "(无)", template)
         return template
 
+    def _build_system_prompt(self) -> str:
+        """构建 system prompt —— Agent 的完整自我认知
+
+        每次 LLM 调用都会带上这个 system prompt，让 LLM 知道：
+        - 我是谁（角色、身份）
+        - 我现在在做什么（工作模式、活跃 Incident）
+        - 我有什么工具（可用的 shell 命令、信任等级）
+        - 我的行为准则（授权规则、输出规范）
+        - 我负责的系统长什么样（system-map）
+        """
+        system_map = self.notebook.read("system-map.md")
+        permissions = self.notebook.read("config/permissions.md")
+
+        return self._fill_prompt(
+            "system",
+            mode=self.mode,
+            readonly="是（只读模式，不执行任何修改操作）" if self.readonly else "否",
+            active_incident=self.current_incident or "无",
+            permissions=permissions or "（未配置，使用默认策略）",
+            system_map=system_map or "（尚未探索，系统拓扑未知）",
+        )
+
+    def _ask_llm(self, prompt: str, max_tokens: int = 4096) -> str:
+        """统一的 LLM 调用入口 —— 始终携带 system prompt
+
+        这是整个 Agent 调用 LLM 的唯一入口。确保每次调用都：
+        1. 带上 system prompt（Agent 的自我认知）
+        2. 带上 user prompt（具体任务指令）
+        """
+        system = self._build_system_prompt()
+        return self.llm.ask(prompt, system=system, max_tokens=max_tokens)
+
     # ═══════════════════════════════════════════
     #  入职
     # ═══════════════════════════════════════════
@@ -122,7 +154,7 @@ class OpsAgent:
 
 请直接输出 markdown 内容，不要加额外说明。"""
 
-        system_map = self.llm.ask(prompt)
+        system_map = self._ask_llm(prompt)
         self.notebook.write("system-map.md", system_map)
 
         # 让 LLM 生成 watchlist
@@ -143,7 +175,7 @@ class OpsAgent:
 
 请直接输出完整的 watchlist.md 内容。"""
 
-        watchlist = self.llm.ask(prompt2)
+        watchlist = self._ask_llm(prompt2)
         self.notebook.write("config/watchlist.md", watchlist)
 
         # 写 README
@@ -338,7 +370,7 @@ class OpsAgent:
             recent_incidents=recent,
         )
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
 
         # 提取命令列表
         commands = self._extract_commands(response)
@@ -365,7 +397,7 @@ class OpsAgent:
             recent_incidents=recent,
         )
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
         return self._parse_assessment(response)
 
     def _diagnose(self, assessment: dict, observations: str) -> dict:
@@ -395,7 +427,7 @@ class OpsAgent:
             system_map=system_map,
         )
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
         return self._parse_diagnosis(response)
 
     def _plan(self, diagnosis: dict) -> ActionPlan | None:
@@ -417,7 +449,7 @@ class OpsAgent:
             permissions=permissions,
         )
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
         return self._parse_plan(response)
 
     def _execute(self, plan: ActionPlan) -> str:
@@ -448,7 +480,7 @@ class OpsAgent:
             verification_criteria=plan.verification,
         )
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
         return "SUCCESS" in response.upper() and "FAILED" not in response.upper()
 
     def _reflect(self):
@@ -465,7 +497,7 @@ class OpsAgent:
             playbook_list=playbook_list,
         )
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
 
         # 追加复盘到 Incident
         self.notebook.append_to_incident(
@@ -538,7 +570,7 @@ class OpsAgent:
 
 请直接回答，保持简洁友好。如果需要执行命令，用 ```commands 格式列出。"""
 
-        response = self.llm.ask(prompt)
+        response = self._ask_llm(prompt)
 
         # 如果回答中包含命令，执行它们
         commands = self._extract_commands(response)
@@ -554,7 +586,7 @@ class OpsAgent:
 {chr(10).join(cmd_results)}
 
 请基于结果回答人类的问题。"""
-            final = self.llm.ask(followup)
+            final = self._ask_llm(followup)
             self.chat.say(final)
         else:
             self.chat.say(response)

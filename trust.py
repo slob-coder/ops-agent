@@ -53,7 +53,7 @@ class TrustEngine:
             # 没有 permissions 文件时的默认策略
             return self._default_check(action_plan)
 
-        prompt = f"""你是一个权限审核员。根据授权规则和 Agent 当前状态，判断这个动作应该怎么处理。
+        prompt = f"""根据授权规则和 Agent 当前状态，判断这个动作应该怎么处理。
 
 ## 授权规则
 {permissions}
@@ -71,8 +71,14 @@ class TrustEngine:
 - ask — 必须等人类批准
 - deny — 拒绝执行"""
 
+        system = (
+            "你是运维 Agent 的权限审核模块。你的职责是根据授权规则和 Agent 的历史表现，"
+            "判断一个运维操作是否允许执行。你必须严格遵守 permissions.md 中的规则，"
+            "不得擅自放宽或收紧。当规则未明确覆盖某个操作时，默认选择 ask（请求人类批准）。"
+        )
+
         try:
-            response = self.llm.ask(prompt, max_tokens=200)
+            response = self.llm.ask(prompt, system=system, max_tokens=200)
             decision = self._parse_decision(response)
             logger.info(f"Trust decision for '{action_plan.action}': {decision}")
             return decision
