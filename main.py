@@ -14,6 +14,7 @@ OpsAgent — 数字运维员工
   python main.py --notebook ./notebook --readonly
 """
 
+import os
 import re
 import sys
 import time
@@ -781,6 +782,8 @@ def main():
     parser.add_argument("--target", default="", help="目标系统（SSH: user@host）")
     parser.add_argument("--port", type=int, default=22, help="SSH 端口")
     parser.add_argument("--key", default="", help="SSH 密钥路径")
+    parser.add_argument("--password", action="store_true",
+                        help="使用密码认证（将交互式提示输入，需要 sshpass）")
     parser.add_argument("--readonly", action="store_true", help="只读模式")
     parser.add_argument("--debug", action="store_true", help="调试模式")
     args = parser.parse_args()
@@ -790,7 +793,15 @@ def main():
 
     # 配置目标
     if args.target:
-        target = TargetConfig.ssh(args.target, args.port, args.key)
+        password = ""
+        if args.password:
+            import getpass
+            password = getpass.getpass(f"SSH password for {args.target}: ")
+        elif os.getenv("OPS_SSH_PASSWORD"):
+            # 也支持通过环境变量传入密码（方便 Docker 部署）
+            password = os.getenv("OPS_SSH_PASSWORD", "")
+
+        target = TargetConfig.ssh(args.target, args.port, args.key, password)
     else:
         target = TargetConfig.local()
 

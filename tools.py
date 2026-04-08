@@ -3,11 +3,12 @@ ToolBox — Agent 的双手
 对 shell 命令的薄封装，分信任等级。支持本地执行和远程 SSH 执行。
 """
 
+import re
 import subprocess
 import shlex
 import time
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger("ops-agent.tools")
 
@@ -47,6 +48,7 @@ class TargetConfig:
     host: str = ""               # SSH: user@host
     port: int = 22               # SSH port
     key_file: str = ""           # SSH key path
+    password: str = ""           # SSH password (需要 sshpass)
     kubectl_context: str = ""    # K8s context (optional)
 
     @classmethod
@@ -54,31 +56,59 @@ class TargetConfig:
         return cls(mode="local")
 
     @classmethod
-    def ssh(cls, host: str, port: int = 22, key_file: str = ""):
-        return cls(mode="ssh", host=host, port=port, key_file=key_file)
+    def ssh(cls, host: str, port: int = 22, key_file: str = "", password: str = ""):
+        return cls(mode="ssh", host=host, port=port, key_file=key_file, password=password)
 
 
 class ToolBox:
     """Agent 的工具箱"""
 
     # 命令黑名单 — 硬禁止
-    BLACKLIST = [
-        "rm -rf /", "mkfs", "dd if=", "> /dev/sd",
-        "DROP DATABASE", "DROP TABLE", "FORMAT",
-        ":(){ :|:& };:", "shutdown", "reboot",
+    # 使用正则精确匹配，避免误伤 --format 等合法参数
+    BLACKLIST_PATTERNS = [
+        # 毁灭性删除：rm -rf / 或 rm -rf /*（但允许 rm -rf /tmp/xxx）
+        (r"\brm\s+-[rf]*r[rf]*\s+/(\s|$|\*)", "rm -rf /"),
+        (r"\brm\s+-[rf]*f[rf]*\s+/(\s|$|\*)", "rm -rf /"),
+        # 格式化文件系统
+        (r"\bmkfs(\.|\s)", "mkfs"),
+        (r"\bmke2fs\b", "mke2fs"),
+        # dd 写入磁盘设备
+        (r"\bdd\s+.*of=/dev/(sd|nvme|hd|vd|xvd)", "dd to disk device"),
+        # 重定向写入到磁盘设备
+        (r">\s*/dev/(sd|nvme|hd|vd|xvd)", "write to disk device"),
+        # SQL 破坏性操作（作为独立关键字，避免误伤文本中的 drop）
+        (r"\bDROP\s+(DATABASE|TABLE|SCHEMA)\b", "DROP DATABASE/TABLE"),
+        (r"\bTRUNCATE\s+TABLE\b", "TRUNCATE TABLE"),
+        # Fork 炸弹
+        (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "fork bomb"),
+        # 重启/关机
+        (r"\bshutdown\s+(-[hrP]|now)", "shutdown"),
+        (r"\breboot\b", "reboot"),
+        (r"\bhalt\b(?!\w)", "halt"),
+        (r"\bpoweroff\b", "poweroff"),
+        # Windows 格式化（作为独立命令，不匹配 --format）
+        (r"(?:^|\s|;|&&|\|\|)format\s+[a-z]:", "format drive"),
+        # chmod/chown 递归改根目录
+        (r"\bchmod\s+-R\s+\S+\s+/(\s|$)", "chmod -R /"),
+        (r"\bchown\s+-R\s+\S+\s+/(\s|$)", "chown -R /"),
     ]
 
-    def __init__(self, target: TargetConfig):
+    def __init__(self, target: "TargetConfig"):
         self.target = target
+        # 预编译正则，提升性能
+        self._compiled_blacklist = [
+            (re.compile(pattern, re.IGNORECASE), label)
+            for pattern, label in self.BLACKLIST_PATTERNS
+        ]
 
     # ═══════════════════════════════════════════
     #  底层执行
     # ═══════════════════════════════════════════
 
     def _check_blacklist(self, cmd: str):
-        for pattern in self.BLACKLIST:
-            if pattern.lower() in cmd.lower():
-                raise PermissionError(f"Command blocked (blacklist): {cmd}")
+        for pattern, label in self._compiled_blacklist:
+            if pattern.search(cmd):
+                raise PermissionError(f"Command blocked (matches '{label}'): {cmd}")
 
     def run(self, cmd: str, timeout: int = 30) -> CommandResult:
         """在目标系统上执行命令"""
@@ -87,16 +117,32 @@ class ToolBox:
 
         try:
             if self.target.mode == "ssh":
-                ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no",
-                           "-o", "ConnectTimeout=10"]
+                ssh_base = ["ssh",
+                            "-o", "StrictHostKeyChecking=no",
+                            "-o", "UserKnownHostsFile=/dev/null",
+                            "-o", "LogLevel=ERROR",
+                            "-o", "ConnectTimeout=10"]
                 if self.target.port != 22:
-                    ssh_cmd += ["-p", str(self.target.port)]
+                    ssh_base += ["-p", str(self.target.port)]
                 if self.target.key_file:
-                    ssh_cmd += ["-i", self.target.key_file]
-                ssh_cmd += [self.target.host, cmd]
-                result = subprocess.run(
-                    ssh_cmd, capture_output=True, text=True, timeout=timeout
-                )
+                    ssh_base += ["-i", self.target.key_file]
+
+                if self.target.password:
+                    # 使用密码：通过 sshpass 包装
+                    # 优先用 -e 从环境变量读密码，避免进程列表泄露
+                    ssh_base += ["-o", "PubkeyAuthentication=no",
+                                 "-o", "PreferredAuthentications=password"]
+                    ssh_cmd = ["sshpass", "-e"] + ssh_base + [self.target.host, cmd]
+                    env = {"SSHPASS": self.target.password, "PATH": "/usr/bin:/bin:/usr/local/bin"}
+                    result = subprocess.run(
+                        ssh_cmd, capture_output=True, text=True,
+                        timeout=timeout, env=env
+                    )
+                else:
+                    ssh_cmd = ssh_base + [self.target.host, cmd]
+                    result = subprocess.run(
+                        ssh_cmd, capture_output=True, text=True, timeout=timeout
+                    )
             else:
                 result = subprocess.run(
                     cmd, shell=True, capture_output=True, text=True, timeout=timeout
@@ -107,6 +153,16 @@ class ToolBox:
             logger.debug(str(cr))
             return cr
 
+        except FileNotFoundError as e:
+            elapsed = time.time() - start
+            if "sshpass" in str(e):
+                msg = ("使用密码认证需要安装 sshpass。"
+                       "macOS: brew install hudochenkov/sshpass/sshpass；"
+                       "Ubuntu/Debian: apt install sshpass；"
+                       "或改用 --key 密钥认证。")
+            else:
+                msg = str(e)
+            return CommandResult(cmd, "", msg, -1, elapsed)
         except subprocess.TimeoutExpired:
             elapsed = time.time() - start
             return CommandResult(cmd, "", f"Timeout after {timeout}s", -1, elapsed)

@@ -13,11 +13,34 @@ logger = logging.getLogger("ops-agent.llm")
 class LLMClient:
     """统一的 LLM 调用接口"""
 
+    # 各 Provider 的默认配置
+    PROVIDER_DEFAULTS = {
+        "anthropic": {
+            "model": "claude-sonnet-4-20250514",
+            "base_url": "",
+        },
+        "openai": {
+            "model": "gpt-4o",
+            "base_url": "",
+        },
+        "zhipu": {
+            "model": "glm-4-plus",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+        },
+    }
+
     def __init__(self):
-        self.provider = os.getenv("OPS_LLM_PROVIDER", "anthropic")
-        self.model = os.getenv("OPS_LLM_MODEL", "claude-sonnet-4-20250514")
+        self.provider = os.getenv("OPS_LLM_PROVIDER", "anthropic").lower()
+        if self.provider not in self.PROVIDER_DEFAULTS:
+            raise ValueError(
+                f"Unsupported provider: {self.provider}. "
+                f"Supported: {list(self.PROVIDER_DEFAULTS.keys())}"
+            )
+
+        defaults = self.PROVIDER_DEFAULTS[self.provider]
+        self.model = os.getenv("OPS_LLM_MODEL") or defaults["model"]
+        self.base_url = os.getenv("OPS_LLM_BASE_URL") or defaults["base_url"]
         self.api_key = os.getenv("OPS_LLM_API_KEY", "")
-        self.base_url = os.getenv("OPS_LLM_BASE_URL", "")
         self._client = None
 
     def _get_client(self):
@@ -30,7 +53,9 @@ class LLMClient:
                 self._client = anthropic.Anthropic(api_key=self.api_key or None)
             except ImportError:
                 raise RuntimeError("pip install anthropic")
-        elif self.provider == "openai":
+
+        elif self.provider in ("openai", "zhipu"):
+            # 智谱兼容 OpenAI SDK，复用 openai 客户端
             try:
                 import openai
                 kwargs = {}
@@ -41,8 +66,6 @@ class LLMClient:
                 self._client = openai.OpenAI(**kwargs)
             except ImportError:
                 raise RuntimeError("pip install openai")
-        else:
-            raise ValueError(f"Unsupported provider: {self.provider}")
 
         return self._client
 
@@ -64,7 +87,8 @@ class LLMClient:
                 response = client.messages.create(**kwargs)
                 text = response.content[0].text
 
-            elif self.provider == "openai":
+            elif self.provider in ("openai", "zhipu"):
+                # 智谱和 OpenAI 的 Chat Completions API 接口一致
                 messages = []
                 if system:
                     messages.append({"role": "system", "content": system})
