@@ -10,6 +10,11 @@ import logging
 logger = logging.getLogger("ops-agent.llm")
 
 
+class LLMInterrupted(Exception):
+    """LLM 流式生成被人类中断"""
+    pass
+
+
 class LLMClient:
     """统一的 LLM 调用接口"""
 
@@ -69,8 +74,20 @@ class LLMClient:
 
         return self._client
 
-    def ask(self, prompt: str, system: str = "", max_tokens: int = 4096) -> str:
-        """向 LLM 提问，返回纯文本回答"""
+    def ask(self, prompt: str, system: str = "", max_tokens: int = 4096,
+            interrupt_check=None) -> str:
+        """向 LLM 提问，返回纯文本回答
+
+        参数:
+            prompt: 用户消息
+            system: system prompt
+            max_tokens: 最大输出 tokens
+            interrupt_check: 可选回调函数。返回 True 时立即中止生成并抛出 LLMInterrupted
+
+        实现说明:
+            为了能在 LLM 长时间生成时响应人类指令，使用流式 API。
+            每收到一个 chunk 就检查一次 interrupt_check。
+        """
         client = self._get_client()
 
         logger.debug(f"LLM request ({self.provider}/{self.model}): {prompt[:100]}...")
@@ -84,25 +101,48 @@ class LLMClient:
                 }
                 if system:
                     kwargs["system"] = system
-                response = client.messages.create(**kwargs)
-                text = response.content[0].text
+
+                # 流式生成，期间可被中断
+                text_parts = []
+                with client.messages.stream(**kwargs) as stream:
+                    for chunk in stream.text_stream:
+                        text_parts.append(chunk)
+                        if interrupt_check and interrupt_check():
+                            logger.info("LLM stream interrupted by user")
+                            raise LLMInterrupted("被人类中断")
+                text = "".join(text_parts)
 
             elif self.provider in ("openai", "zhipu"):
-                # 智谱和 OpenAI 的 Chat Completions API 接口一致
                 messages = []
                 if system:
                     messages.append({"role": "system", "content": system})
                 messages.append({"role": "user", "content": prompt})
-                response = client.chat.completions.create(
+
+                # 流式生成
+                text_parts = []
+                stream = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     max_tokens=max_tokens,
+                    stream=True,
                 )
-                text = response.choices[0].message.content
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        text_parts.append(chunk.choices[0].delta.content)
+                    if interrupt_check and interrupt_check():
+                        logger.info("LLM stream interrupted by user")
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+                        raise LLMInterrupted("被人类中断")
+                text = "".join(text_parts)
 
             logger.debug(f"LLM response: {text[:200]}...")
             return text
 
+        except LLMInterrupted:
+            raise
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise

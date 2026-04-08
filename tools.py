@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 logger = logging.getLogger("ops-agent.tools")
 
 
+class CommandInterrupted(Exception):
+    """命令执行被人类中断"""
+    pass
+
+
 @dataclass
 class CommandResult:
     """命令执行结果"""
@@ -160,16 +165,71 @@ class ToolBox:
     #  底层执行
     # ═══════════════════════════════════════════
 
+    def _popen_with_interrupt(self, cmd, timeout=30, env=None, shell=False,
+                               interrupt_check=None, poll_interval=0.1):
+        """启动子进程并支持中断检查
+
+        类似 subprocess.run，但每 poll_interval 秒检查一次 interrupt_check。
+        被中断时立即终止子进程，抛出 CommandInterrupted。
+
+        返回一个有 stdout/stderr/returncode 属性的对象（兼容 CompletedProcess）。
+        """
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            shell=shell,
+        )
+
+        start = time.time()
+        while True:
+            try:
+                stdout, stderr = proc.communicate(timeout=poll_interval)
+                # 进程结束
+                class _Result:
+                    pass
+                r = _Result()
+                r.stdout = stdout or ""
+                r.stderr = stderr or ""
+                r.returncode = proc.returncode
+                return r
+            except subprocess.TimeoutExpired:
+                # poll_interval 内未结束，检查中断
+                if interrupt_check and interrupt_check():
+                    self._kill_proc_tree(proc)
+                    logger.info(f"Command interrupted by user")
+                    raise CommandInterrupted("被人类中断")
+                if time.time() - start >= timeout:
+                    self._kill_proc_tree(proc)
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+
+    @staticmethod
+    def _kill_proc_tree(proc):
+        """强制终止子进程及其子进程"""
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+        except Exception:
+            pass
+
     def _check_blacklist(self, cmd: str):
         for pattern, label in self._compiled_blacklist:
             if pattern.search(cmd):
                 raise PermissionError(f"Command blocked (matches '{label}'): {cmd}")
 
-    def run(self, cmd: str, timeout: int = 30, _retry: int = 0) -> CommandResult:
+    def run(self, cmd: str, timeout: int = 30, _retry: int = 0,
+            interrupt_check=None) -> CommandResult:
         """在目标系统上执行命令
 
         - 自动通过 SSH ControlMaster 复用底层连接
         - 第一次连接失败时自动重试一次（清理可能损坏的 master socket）
+        - 支持 interrupt_check 回调：返回 True 时立即终止子进程
         """
         self._check_blacklist(cmd)
         start = time.time()
@@ -180,27 +240,26 @@ class ToolBox:
                 ssh_base = ["ssh"] + ssh_opts
 
                 if self.target.password:
-                    # 密码模式：sshpass 包装
-                    # 注意：ControlMaster 模式下，只有第一次（建立 master）真正用到密码，
-                    # 后续命令复用 master socket，根本不会再次认证
                     ssh_cmd = ["sshpass", "-e"] + ssh_base + [self.target.host, cmd]
                     env = {
                         "SSHPASS": self.target.password,
                         "PATH": "/usr/bin:/bin:/usr/local/bin",
                         "HOME": os.environ.get("HOME", "/tmp"),
                     }
-                    result = subprocess.run(
-                        ssh_cmd, capture_output=True, text=True,
-                        timeout=timeout, env=env
+                    result = self._popen_with_interrupt(
+                        ssh_cmd, timeout=timeout, env=env,
+                        interrupt_check=interrupt_check,
                     )
                 else:
                     ssh_cmd = ssh_base + [self.target.host, cmd]
-                    result = subprocess.run(
-                        ssh_cmd, capture_output=True, text=True, timeout=timeout
+                    result = self._popen_with_interrupt(
+                        ssh_cmd, timeout=timeout,
+                        interrupt_check=interrupt_check,
                     )
             else:
-                result = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True, timeout=timeout
+                result = self._popen_with_interrupt(
+                    cmd, timeout=timeout, shell=True,
+                    interrupt_check=interrupt_check,
                 )
 
             elapsed = time.time() - start
@@ -216,6 +275,9 @@ class ToolBox:
             logger.debug(str(cr))
             return cr
 
+        except CommandInterrupted:
+            # 中断异常向上抛，不包装成 CommandResult
+            raise
         except FileNotFoundError as e:
             elapsed = time.time() - start
             if "sshpass" in str(e):

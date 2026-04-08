@@ -24,9 +24,9 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-from llm import LLMClient
+from llm import LLMClient, LLMInterrupted
 from notebook import Notebook
-from tools import ToolBox, TargetConfig
+from tools import ToolBox, TargetConfig, CommandInterrupted
 from trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
 from chat import HumanChannel
 
@@ -111,15 +111,36 @@ class OpsAgent:
             system_map=system_map or "（尚未探索，系统拓扑未知）",
         )
 
-    def _ask_llm(self, prompt: str, max_tokens: int = 4096) -> str:
+    def _ask_llm(self, prompt: str, max_tokens: int = 4096,
+                 allow_interrupt: bool = True) -> str:
         """统一的 LLM 调用入口 —— 始终携带 system prompt
 
         这是整个 Agent 调用 LLM 的唯一入口。确保每次调用都：
         1. 带上 system prompt（Agent 的自我认知）
         2. 带上 user prompt（具体任务指令）
+        3. 流式生成时自动检查人类中断（可被随时打断）
         """
         system = self._build_system_prompt()
-        return self.llm.ask(prompt, system=system, max_tokens=max_tokens)
+        check = self._interrupt_check if allow_interrupt else None
+        return self.llm.ask(
+            prompt, system=system, max_tokens=max_tokens,
+            interrupt_check=check,
+        )
+
+    def _interrupt_check(self) -> bool:
+        """供 LLM 流式调用和 SSH 命令使用的中断检查回调
+
+        返回 True 时调用方应立即停止当前操作。
+        触发条件：人类输入了任何指令（inbox 非空 或 interrupted 标志被设置）。
+        """
+        return self.chat.has_pending() or self.chat.is_interrupted()
+
+    def _run_cmd(self, cmd: str, timeout: int = 30):
+        """统一的命令执行入口，自动接入中断检查"""
+        return self.tools.run(
+            cmd, timeout=timeout,
+            interrupt_check=self._interrupt_check,
+        )
 
     # ═══════════════════════════════════════════
     #  入职
@@ -218,6 +239,20 @@ class OpsAgent:
             except KeyboardInterrupt:
                 self.chat.say("收到退出信号，下班了。", "info")
                 break
+            except (LLMInterrupted, CommandInterrupted) as e:
+                # 被人类打断 —— 优雅处理：放弃当前任务，立刻处理人类消息
+                self.chat.log(f"已中断当前任务（{type(e).__name__}）")
+                # 如果当前在调查 Incident，标记为被中断
+                if self.current_incident:
+                    self.notebook.append_to_incident(
+                        self.current_incident,
+                        f"\n## 被人类中断 @ {datetime.now().strftime('%H:%M:%S')}\n"
+                    )
+                # 重置工作模式
+                self.mode = self.PATROL
+                self.current_issue = ""
+                # 处理触发中断的人类消息
+                self._drain_human_messages()
             except Exception as e:
                 logger.error(f"主循环异常: {e}", exc_info=True)
                 self.chat.say(f"我遇到了内部错误：{e}，继续工作。", "warning")
@@ -429,7 +464,7 @@ class OpsAgent:
         # 执行命令、收集输出
         outputs = []
         for cmd in commands[:10]:  # 最多执行 10 条
-            result = self.tools.run(cmd, timeout=15)
+            result = self._run_cmd(cmd, timeout=15)
             outputs.append(str(result))
 
         return "\n\n".join(outputs)
@@ -511,7 +546,7 @@ class OpsAgent:
 
         results = []
         for cmd in commands:
-            result = self.tools.run(cmd)
+            result = self._run_cmd(cmd)
             results.append(str(result))
             if not result.success:
                 logger.warning(f"Command failed: {cmd}")
@@ -702,7 +737,7 @@ class OpsAgent:
                     self.chat.say("收到新指令，停止当前任务。", "info")
                     return
                 self.chat.log(f"执行: {cmd}")
-                result = self.tools.run(cmd, timeout=20)
+                result = self._run_cmd(cmd, timeout=20)
                 cmd_results.append(str(result))
 
             followup = f"""刚才的问题是：{msg}
@@ -788,7 +823,7 @@ class OpsAgent:
         ]
         outputs = []
         for cmd in commands:
-            result = self.tools.run(cmd, timeout=10)
+            result = self._run_cmd(cmd, timeout=10)
             outputs.append(str(result))
         return "\n".join(outputs)
 
