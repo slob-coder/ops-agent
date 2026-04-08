@@ -3,6 +3,7 @@ ToolBox — Agent 的双手
 对 shell 命令的薄封装，分信任等级。支持本地执行和远程 SSH 执行。
 """
 
+import os
 import re
 import subprocess
 import shlex
@@ -100,6 +101,60 @@ class ToolBox:
             (re.compile(pattern, re.IGNORECASE), label)
             for pattern, label in self.BLACKLIST_PATTERNS
         ]
+        # SSH 连接复用：每个 ToolBox 实例使用一个 ControlMaster socket
+        # 这样所有 ssh 命令复用同一个底层 TCP 连接，避免每次重新握手
+        self._ssh_control_path = ""
+        if target.mode == "ssh":
+            import tempfile
+            import atexit
+            # 用 PID 隔离，多 Agent 实例不冲突
+            self._ssh_control_path = os.path.join(
+                tempfile.gettempdir(),
+                f"ops_agent_ssh_{os.getpid()}_%h_%p_%r"
+            )
+            # 进程退出时清理 master 连接
+            atexit.register(self._cleanup_ssh_master)
+
+    def _cleanup_ssh_master(self):
+        """退出时关闭 SSH master 连接"""
+        if not self._ssh_control_path:
+            return
+        try:
+            subprocess.run(
+                ["ssh", "-O", "exit",
+                 "-o", f"ControlPath={self._ssh_control_path}",
+                 self.target.host],
+                capture_output=True, timeout=5
+            )
+            logger.info("SSH master connection closed")
+        except Exception:
+            pass
+
+    def _build_ssh_options(self) -> list[str]:
+        """构造 ssh 公共选项，包含 ControlMaster 和保活配置"""
+        opts = [
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-o", "ConnectTimeout=10",
+            # ── 连接复用：关键 ──
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={self._ssh_control_path}",
+            "-o", "ControlPersist=600",   # master 连接闲置 10 分钟后自动关闭
+            # ── 保活：客户端每 30 秒发一次心跳，3 次失败才断 ──
+            "-o", "ServerAliveInterval=30",
+            "-o", "ServerAliveCountMax=3",
+            # ── TCP 层保活（防 NAT 会话超时）──
+            "-o", "TCPKeepAlive=yes",
+        ]
+        if self.target.port != 22:
+            opts += ["-p", str(self.target.port)]
+        if self.target.key_file:
+            opts += ["-i", self.target.key_file]
+        if self.target.password:
+            opts += ["-o", "PubkeyAuthentication=no",
+                     "-o", "PreferredAuthentications=password"]
+        return opts
 
     # ═══════════════════════════════════════════
     #  底层执行
@@ -110,30 +165,30 @@ class ToolBox:
             if pattern.search(cmd):
                 raise PermissionError(f"Command blocked (matches '{label}'): {cmd}")
 
-    def run(self, cmd: str, timeout: int = 30) -> CommandResult:
-        """在目标系统上执行命令"""
+    def run(self, cmd: str, timeout: int = 30, _retry: int = 0) -> CommandResult:
+        """在目标系统上执行命令
+
+        - 自动通过 SSH ControlMaster 复用底层连接
+        - 第一次连接失败时自动重试一次（清理可能损坏的 master socket）
+        """
         self._check_blacklist(cmd)
         start = time.time()
 
         try:
             if self.target.mode == "ssh":
-                ssh_base = ["ssh",
-                            "-o", "StrictHostKeyChecking=no",
-                            "-o", "UserKnownHostsFile=/dev/null",
-                            "-o", "LogLevel=ERROR",
-                            "-o", "ConnectTimeout=10"]
-                if self.target.port != 22:
-                    ssh_base += ["-p", str(self.target.port)]
-                if self.target.key_file:
-                    ssh_base += ["-i", self.target.key_file]
+                ssh_opts = self._build_ssh_options()
+                ssh_base = ["ssh"] + ssh_opts
 
                 if self.target.password:
-                    # 使用密码：通过 sshpass 包装
-                    # 优先用 -e 从环境变量读密码，避免进程列表泄露
-                    ssh_base += ["-o", "PubkeyAuthentication=no",
-                                 "-o", "PreferredAuthentications=password"]
+                    # 密码模式：sshpass 包装
+                    # 注意：ControlMaster 模式下，只有第一次（建立 master）真正用到密码，
+                    # 后续命令复用 master socket，根本不会再次认证
                     ssh_cmd = ["sshpass", "-e"] + ssh_base + [self.target.host, cmd]
-                    env = {"SSHPASS": self.target.password, "PATH": "/usr/bin:/bin:/usr/local/bin"}
+                    env = {
+                        "SSHPASS": self.target.password,
+                        "PATH": "/usr/bin:/bin:/usr/local/bin",
+                        "HOME": os.environ.get("HOME", "/tmp"),
+                    }
                     result = subprocess.run(
                         ssh_cmd, capture_output=True, text=True,
                         timeout=timeout, env=env
@@ -150,6 +205,14 @@ class ToolBox:
 
             elapsed = time.time() - start
             cr = CommandResult(cmd, result.stdout, result.stderr, result.returncode, elapsed)
+
+            # ── 失败自动重试一次：清掉可能损坏的 master 连接后重连 ──
+            if (self.target.mode == "ssh" and not cr.success and _retry == 0):
+                if self._is_connection_error(cr.stderr):
+                    logger.warning(f"SSH connection error, resetting master and retrying: {cr.stderr.strip()[:200]}")
+                    self._cleanup_ssh_master()
+                    return self.run(cmd, timeout=timeout, _retry=1)
+
             logger.debug(str(cr))
             return cr
 
@@ -165,10 +228,37 @@ class ToolBox:
             return CommandResult(cmd, "", msg, -1, elapsed)
         except subprocess.TimeoutExpired:
             elapsed = time.time() - start
+            # 超时也尝试重置一次 master（可能 master 卡死）
+            if self.target.mode == "ssh" and _retry == 0:
+                logger.warning(f"SSH command timeout, resetting master and retrying")
+                self._cleanup_ssh_master()
+                return self.run(cmd, timeout=timeout, _retry=1)
             return CommandResult(cmd, "", f"Timeout after {timeout}s", -1, elapsed)
         except Exception as e:
             elapsed = time.time() - start
             return CommandResult(cmd, "", str(e), -1, elapsed)
+
+    @staticmethod
+    def _is_connection_error(stderr: str) -> bool:
+        """判断 stderr 是不是连接层错误（值得重试）"""
+        if not stderr:
+            return False
+        markers = [
+            "Connection closed",
+            "Connection reset",
+            "Connection refused",
+            "Connection timed out",
+            "Broken pipe",
+            "ssh_exchange_identification",
+            "control socket",
+            "mux_client",
+            "channel open failed",
+            "Network is unreachable",
+            "Host is unreachable",
+            "Permission denied",  # master 损坏时偶现
+            "kex_exchange_identification",
+        ]
+        return any(m.lower() in stderr.lower() for m in markers)
 
     def run_local(self, cmd: str, timeout: int = 60) -> CommandResult:
         """在运维工作站本地执行"""

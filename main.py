@@ -63,6 +63,7 @@ class OpsAgent:
 
         self.mode = self.PATROL
         self.readonly = readonly
+        self.paused = False              # 暂停状态：暂停后只响应人类，不自主巡检
         self.current_incident = None     # 当前活跃 Incident 文件名
         self.current_issue = ""          # 当前正在调查的问题描述
         self._running = True
@@ -207,8 +208,9 @@ class OpsAgent:
 
     def run(self):
         """永不停歇的主循环"""
-        self.chat.say("数字运维员工启动。输入消息随时和我对话。", "info")
+        self.chat.banner("OpsAgent")
         self.onboard()
+        self.chat.say("已上岗，进入巡检模式。", "success")
 
         while self._running:
             try:
@@ -219,30 +221,72 @@ class OpsAgent:
             except Exception as e:
                 logger.error(f"主循环异常: {e}", exc_info=True)
                 self.chat.say(f"我遇到了内部错误：{e}，继续工作。", "warning")
-                time.sleep(10)
+                self._interruptible_sleep(10)
 
         self.chat.stop()
+
+    def _interruptible_sleep(self, seconds: float):
+        """可被人类输入中断的睡眠
+
+        把长睡眠拆成小片段，每个片段都检查中断标志和 inbox。
+        这样 Agent 在巡检间隔中也能秒级响应人类指令。
+        """
+        end = time.time() + seconds
+        while time.time() < end and self._running:
+            if self.chat.is_interrupted() or self.chat.has_pending():
+                return
+            time.sleep(0.2)
+
+    def _drain_human_messages(self) -> bool:
+        """处理所有积压的人类消息
+
+        返回 True 表示处理了消息，调用方应当跳过本轮自主行为。
+        """
+        handled = False
+        while True:
+            msg = self.chat.check_inbox()
+            if not msg:
+                break
+            self._handle_human_message(msg)
+            handled = True
+        if handled:
+            self.chat.clear_interrupt()
+        return handled
 
     def _loop_once(self):
         """主循环的一次迭代"""
 
-        # ── 第一优先级：听人说话 ──
-        human_msg = self.chat.check_inbox()
-        if human_msg:
-            self._handle_human_message(human_msg)
+        # ── 第一优先级：处理所有积压的人类消息 ──
+        if self._drain_human_messages():
             return
 
-        # ── 第二步：感知 ──
+        # ── 暂停态：只响应人类，不主动巡检 ──
+        if self.paused:
+            self._interruptible_sleep(1)
+            return
+
+        # ── 感知 ──
+        self.chat.log(f"巡检中...（mode={self.mode}）")
         observations = self._observe()
-        if not observations:
-            time.sleep(self.INTERVALS.get(self.mode, 60))
+
+        # 巡检过程中可能有人插话
+        if self._drain_human_messages():
             return
 
-        # ── 第三步：判断 ──
+        if not observations:
+            self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
+            return
+
+        # ── 判断 ──
         assessment = self._assess(observations)
 
+        # assess 后再次检查
+        if self._drain_human_messages():
+            return
+
         if assessment.get("status") == "NORMAL":
-            time.sleep(self.INTERVALS.get(self.mode, 60))
+            self.chat.log("一切正常")
+            self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
             return
 
         # ── 发现异常 ──
@@ -264,6 +308,10 @@ class OpsAgent:
 
         # ── 诊断 ──
         diagnosis = self._diagnose(assessment, observations)
+
+        # 诊断后允许人类插话
+        if self._drain_human_messages():
+            return
 
         if diagnosis.get("escalate") == "YES" or diagnosis.get("confidence", 0) < 50:
             self.notebook.append_to_incident(
@@ -329,7 +377,7 @@ class OpsAgent:
 
         # ── 验证 ──
         self.chat.say("修复完成，开始验证...", "info")
-        time.sleep(3)  # 等一小会儿让系统稳定
+        self._interruptible_sleep(3)  # 等系统稳定
         after_state = self._quick_observe()
         verified = self._verify(action_plan, before_state, after_state)
 
@@ -526,19 +574,43 @@ class OpsAgent:
         """处理人类的消息"""
         lower = msg.lower().strip()
 
-        # 特殊命令
-        if lower in ("quit", "exit", "bye"):
+        # ═══ 控制指令 ═══
+
+        if lower in ("quit", "exit", "bye", ":q"):
             self.chat.say("收到，下班了。再见！", "info")
             self._running = False
+            return
+
+        if lower in ("help", "?", "h"):
+            self._show_help()
             return
 
         if lower == "status":
             self._report_status()
             return
 
+        if lower == "pause":
+            self.paused = True
+            self.chat.say("已暂停自主巡检。我会继续响应你的指令。输入 resume 恢复。", "info")
+            return
+
+        if lower == "resume":
+            self.paused = False
+            self.chat.say("已恢复自主巡检。", "success")
+            return
+
+        if lower == "stop":
+            if self.mode != self.PATROL:
+                self.mode = self.PATROL
+                self.current_issue = ""
+                self.chat.say("已停止当前调查，回到巡检模式。", "info")
+            else:
+                self.chat.say("我现在就在巡检中。", "info")
+            return
+
         if lower == "readonly on":
             self.readonly = True
-            self.chat.say("已切换到只读模式。", "info")
+            self.chat.say("已切换到只读模式（不会执行任何修改操作）。", "info")
             return
 
         if lower == "readonly off":
@@ -546,51 +618,144 @@ class OpsAgent:
             self.chat.say("已切换到正常模式。", "info")
             return
 
-        if lower == "stop":
-            self.mode = self.PATROL
-            self.current_issue = ""
-            self.chat.say("已停止当前调查，回到巡检模式。", "info")
+        # ═══ Notebook 浏览指令 ═══
+
+        if lower in ("list playbook", "list playbooks", "lp"):
+            files = self.notebook.list_dir("playbook")
+            if files:
+                self.chat.say("当前 Playbook：\n" + "\n".join(f"   • {f}" for f in files))
+            else:
+                self.chat.say("还没有 Playbook。")
             return
 
-        # 通用对话：让 LLM 回答
-        context = (
-            f"系统信息：\n{self.notebook.read('system-map.md')[:1000]}\n\n"
-            f"当前状态：模式={self.mode}, 只读={self.readonly}\n"
-            f"活跃 Incident: {self.current_incident or '无'}\n"
-        )
+        if lower in ("list incidents", "li"):
+            active = self.notebook.list_dir("incidents/active")
+            archive = self.notebook.list_dir("incidents/archive")
+            msg_parts = []
+            if active:
+                msg_parts.append("活跃 Incident:\n" + "\n".join(f"   • {f}" for f in active))
+            else:
+                msg_parts.append("无活跃 Incident。")
+            if archive:
+                recent = archive[-5:]
+                msg_parts.append("最近归档（5 条）:\n" + "\n".join(f"   • {f}" for f in recent))
+            self.chat.say("\n".join(msg_parts))
+            return
 
-        prompt = f"""你是一名运维工程师，人类同事问了你一个问题。
-根据你的系统知识和当前状态回答。如果需要执行命令来回答，
-列出命令并执行。如果不确定，直接说不确定。
+        if lower.startswith("show "):
+            # show <文件名>：显示一个 Notebook 文件
+            target = msg[5:].strip()
+            content = self._find_and_read(target)
+            if content:
+                # 限长，避免刷屏
+                preview = content[:2000] + ("\n...(已截断)" if len(content) > 2000 else "")
+                self.chat.say(f"{target}:\n{preview}")
+            else:
+                self.chat.say(f"找不到 {target}", "warning")
+            return
 
-## 系统上下文
-{context}
+        # ═══ 通用对话 / 任务委派（让 LLM 处理） ═══
 
-## 人类的问题
+        self.chat.log("正在思考你的指令...")
+
+        prompt = f"""人类同事给你发了一条消息。判断这是一个问题（要回答）还是一个任务（要执行）。
+
+## 当前状态
+- 工作模式: {self.mode}
+- 只读模式: {self.readonly}
+- 暂停: {self.paused}
+- 活跃 Incident: {self.current_incident or '无'}
+
+## 人类的消息
 {msg}
 
-请直接回答，保持简洁友好。如果需要执行命令，用 ```commands 格式列出。"""
+请按以下格式回答：
+
+如果是问题，并且你不需要执行命令就能回答：
+```text
+[直接回答]
+```
+
+如果你需要执行命令来回答或完成任务：
+```commands
+命令1
+命令2
+```
+然后给出你打算做什么的简短说明。
+
+记住：
+- 简洁友好，不要长篇大论
+- 只输出真正需要执行的命令
+- 如果是修改类操作（L2+），先说明你打算做什么，等批准
+"""
 
         response = self._ask_llm(prompt)
-
-        # 如果回答中包含命令，执行它们
         commands = self._extract_commands(response)
+
         if commands:
+            # 有命令要执行
+            self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
             cmd_results = []
-            for cmd in commands[:5]:
-                result = self.tools.run(cmd, timeout=15)
+            for cmd in commands[:8]:
+                # 命令执行也允许中断
+                if self.chat.is_interrupted():
+                    self.chat.say("收到新指令，停止当前任务。", "info")
+                    return
+                self.chat.log(f"执行: {cmd}")
+                result = self.tools.run(cmd, timeout=20)
                 cmd_results.append(str(result))
 
-            # 让 LLM 基于命令结果给出最终回答
             followup = f"""刚才的问题是：{msg}
-命令执行结果：
+
+执行了以下命令，结果如下：
 {chr(10).join(cmd_results)}
 
-请基于结果回答人类的问题。"""
+请基于这些结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。"""
             final = self._ask_llm(followup)
             self.chat.say(final)
         else:
-            self.chat.say(response)
+            # 纯文字回复
+            # 去掉 ```text ``` 包裹
+            text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", response, flags=re.DOTALL).strip()
+            self.chat.say(text or response)
+
+    def _show_help(self):
+        """显示帮助"""
+        self.chat.say(
+            "可用指令：\n"
+            "   ─── 控制 ───\n"
+            "   status        查看我当前的状态\n"
+            "   pause         暂停自主巡检\n"
+            "   resume        恢复自主巡检\n"
+            "   stop          中止当前调查回到巡检\n"
+            "   readonly on/off  切换只读模式\n"
+            "   quit          让我下班\n"
+            "   ─── 查看 ───\n"
+            "   list playbook (lp)    列出所有 Playbook\n"
+            "   list incidents (li)   列出 Incident\n"
+            "   show <文件名>          查看某个 Notebook 文件\n"
+            "   ─── 自由对话 ───\n"
+            "   直接打字提问或派发任务，我会自己想办法。",
+        )
+
+    def _find_and_read(self, name: str) -> str:
+        """模糊查找并读取一个 Notebook 文件"""
+        # 直接路径
+        if self.notebook.exists(name):
+            return self.notebook.read(name)
+        # 在常见目录中找
+        for prefix in ("playbook/", "incidents/active/", "incidents/archive/",
+                       "lessons/", "config/", ""):
+            for suffix in ("", ".md"):
+                full = f"{prefix}{name}{suffix}"
+                if self.notebook.exists(full):
+                    return self.notebook.read(full)
+        # 模糊匹配
+        for d in ("playbook", "incidents/active", "incidents/archive", "lessons", "config"):
+            for f in self.notebook.list_dir(d):
+                if name.lower() in f.lower():
+                    return self.notebook.read(f"{d}/{f}")
+        return ""
 
     def _report_status(self):
         """汇报当前状态"""
@@ -601,6 +766,7 @@ class OpsAgent:
         self.chat.say(
             f"当前状态：\n"
             f"   模式：{self.mode}\n"
+            f"   暂停：{'是' if self.paused else '否'}\n"
             f"   只读：{'是' if self.readonly else '否'}\n"
             f"   活跃 Incident：{len(active_incidents)} 个\n"
             f"   历史 Incident：{len(archived)} 个\n"
