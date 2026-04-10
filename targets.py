@@ -17,6 +17,40 @@ logger = logging.getLogger("ops-agent.targets")
 
 
 @dataclass
+class SourceRepo:
+    """一个源码仓库的配置(Sprint 2 引入)
+
+    描述运行时实体到本地源码 clone 的映射关系,供 source_locator 使用。
+    """
+    name: str                              # 仓库别名,如 "backend"
+    path: str                              # 本地 clone 的绝对路径(Agent 工作站上)
+    repo_url: str = ""                     # git 远端
+    branch: str = "main"
+    language: str = ""                     # python / java / go / node / rust / cpp / ...
+    build_cmd: str = ""                    # 编译/语法检查命令
+    test_cmd: str = ""                     # 单元测试命令
+    runtime_service: str = ""              # 对应运行时的服务/容器/pod 名
+    log_path: str = ""                     # 对应日志路径(可选)
+    # 路径前缀映射:处理容器内外路径差异
+    # 容器里是 /app/src/main.py,工作站 clone 是 /opt/sources/backend/src/main.py
+    path_prefix_runtime: str = ""          # 运行时前缀 "/app"
+    path_prefix_local: str = ""            # 本地前缀(相对 path,通常为 "")
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SourceRepo":
+        """从 dict 构造,兼容 yaml 加载和旧版配置"""
+        if isinstance(d, cls):
+            return d
+        normalized = {k.replace("-", "_"): v for k, v in d.items()}
+        valid = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in normalized.items() if k in valid}
+        # name 和 path 是必填
+        filtered.setdefault("name", "unnamed")
+        filtered.setdefault("path", "")
+        return cls(**filtered)
+
+
+@dataclass
 class Target:
     """一个目标系统的完整配置"""
     name: str                           # 唯一标识,如 "web-prod-01"
@@ -40,8 +74,16 @@ class Target:
     context: str = ""                   # kubectl context
     namespace: str = "default"          # 默认 namespace
 
-    # 源码地图(供 bug 修复用)
+    # 源码地图(供 bug 修复用) — 保持 list[dict] 以兼容 Sprint 1
     source_repos: list[dict] = field(default_factory=list)
+
+    def get_source_repos(self) -> list["SourceRepo"]:
+        """返回 SourceRepo 对象列表(Sprint 2 新增)
+
+        保持向后兼容:target.source_repos 仍然是 list[dict],
+        但调用 get_source_repos() 可以拿到类型化的对象。
+        """
+        return [SourceRepo.from_dict(r) for r in (self.source_repos or [])]
 
 
 def load_targets(config_path: str) -> list[Target]:

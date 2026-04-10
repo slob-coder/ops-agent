@@ -640,10 +640,61 @@ class OpsAgent:
         response = self._ask_llm(prompt)
         return self._parse_assessment(response)
 
+    def _locate_source_from_text(self, text: str):
+        """Sprint 2: 从一段日志/观察文本里抽取异常栈并定位到本地源码
+
+        返回 (LocateResult | None, ParsedTrace | None)。
+        任何失败都返回 (None, None),不影响诊断流程继续。
+        """
+        try:
+            from stack_parser import StackTraceParser
+            from source_locator import SourceLocator
+        except Exception as e:
+            logger.debug(f"sprint2 modules import failed: {e}")
+            return None, None
+
+        if not text or not self.current_target:
+            return None, None
+        try:
+            parsed = StackTraceParser().extract_and_parse(text)
+        except Exception as e:
+            logger.debug(f"stack parse failed: {e}")
+            return None, None
+        if not parsed.frames:
+            return None, None
+        try:
+            repos = self.current_target.get_source_repos()
+        except Exception:
+            repos = []
+        try:
+            result = SourceLocator(repos).locate(parsed.frames)
+        except Exception as e:
+            logger.debug(f"source locate failed: {e}")
+            return None, parsed
+        return result, parsed
+
     def _diagnose(self, assessment: dict, observations: str) -> dict:
         """深度诊断"""
         system_map = self.notebook.read("system-map.md")
         summary = assessment.get("summary", "")
+
+        # Sprint 2: 异常栈反向定位源码
+        source_text = "(无)"
+        locate_result, parsed = self._locate_source_from_text(
+            (observations or "") + "\n" + (summary or "")
+        )
+        if locate_result and locate_result.locations:
+            source_text = locate_result.render()
+            top = locate_result.locations[0]
+            self.chat.log(
+                f"已定位异常源码: {top.repo_name}:{os.path.basename(top.local_file)}"
+                f":{top.frame.line}"
+            )
+        elif parsed and parsed.frames:
+            source_text = (
+                f"（识别到 {parsed.language} 异常栈共 {len(parsed.frames)} 帧,"
+                f"但未能映射到本地源码;请检查 targets.yaml 的 source_repos 配置）"
+            )
 
         # 搜索相关 Playbook
         relevant_files = self.notebook.find_relevant(summary + " " + observations[:500])
@@ -665,6 +716,7 @@ class OpsAgent:
             relevant_playbooks=playbook_content or "（无匹配的 Playbook）",
             similar_incidents=incidents_content or "（无历史记录）",
             system_map=system_map,
+            source_locations=source_text,
         )
 
         response = self._ask_llm(prompt)
