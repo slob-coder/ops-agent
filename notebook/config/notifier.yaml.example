@@ -1,0 +1,25 @@
+# OpsAgent Notifier 配置示例
+# 复制为 notebook/config/notifier.yaml 并填写实际值
+
+# 类型: slack | dingtalk | feishu | none
+type: slack
+
+# Webhook URL — 也可以通过 OPS_NOTIFIER_WEBHOOK_URL 环境变量覆盖(更安全)
+webhook_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+
+# 触发通知的事件类型白名单
+notify_on:
+  - incident_opened
+  - incident_closed
+  - pr_merged
+  - revert_triggered
+  - critical_failure
+  - llm_degraded
+  - daily_report
+
+# 免打扰时段(本地时间)。critical 通知不受影响。
+quiet_hours:
+  start: "22:00"
+  end: "08:00"
+  except_urgency:
+    - critical

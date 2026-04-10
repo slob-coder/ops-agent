@@ -32,12 +32,14 @@ class HealthServer:
         server.stop()
     """
 
-    def __init__(self, snapshot_fn=None):
+    def __init__(self, snapshot_fn=None, metrics_fn=None):
         """snapshot_fn() -> dict — 主进程提供的状态快照函数。
+        metrics_fn() -> str  — Sprint 6: 返回 Prometheus 格式文本(可选)。
 
         必须是只读、快速、不抛异常的。
         """
         self._snapshot_fn = snapshot_fn or (lambda: {"status": "ok"})
+        self._metrics_fn = metrics_fn
         self._httpd: HTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._started_at: float = 0.0
@@ -50,6 +52,7 @@ class HealthServer:
             return True
 
         snapshot_fn = self._snapshot_fn
+        metrics_fn = self._metrics_fn
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format, *args):
@@ -57,6 +60,22 @@ class HealthServer:
 
             def do_GET(self):
                 try:
+                    if self.path == "/metrics":
+                        if metrics_fn is None:
+                            self.send_response(404)
+                            self.end_headers()
+                            return
+                        try:
+                            text = metrics_fn() or ""
+                        except Exception as e:
+                            text = f"# error: {e}\n"
+                        body = text.encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/plain; version=0.0.4")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
                     if self.path in ("/healthz", "/health", "/"):
                         try:
                             data = snapshot_fn() or {}

@@ -141,6 +141,35 @@ class OpsAgent:
         self.health_server = None
         self.llm_degraded = False
 
+        # ── Sprint 6: 可观测性 ──
+        try:
+            from audit import AuditLog
+            self.audit = AuditLog(str(Path(notebook_path) / "audit"))
+        except Exception as e:
+            logger.warning(f"audit init failed: {e}")
+            self.audit = None
+        try:
+            from notifier import NotifierConfig, make_notifier, PolicyNotifier
+            ncfg = NotifierConfig.from_yaml(
+                str(Path(notebook_path) / "config" / "notifier.yaml")
+            )
+            self.notifier = PolicyNotifier(make_notifier(ncfg), ncfg)
+        except Exception as e:
+            logger.warning(f"notifier init failed: {e}")
+            self.notifier = None
+        try:
+            from reporter import DailyReporter
+            self.reporter = DailyReporter(
+                audit=self.audit, llm=self.llm,
+                notifier=self.notifier, limits=self.limits,
+            ) if self.audit else None
+        except Exception as e:
+            logger.warning(f"reporter init failed: {e}")
+            self.reporter = None
+        # 计数器(用于 /metrics)
+        self._counter_actions: dict = {}
+        self._counter_incidents: dict = {}
+
     def _switch_target(self, name: str) -> bool:
         """切换当前激活的目标"""
         if name not in self.toolboxes:
@@ -1164,7 +1193,10 @@ class OpsAgent:
         """启动健康检查后台线程。失败返回 False。"""
         try:
             from health import HealthServer
-            self.health_server = HealthServer(snapshot_fn=self.health_snapshot)
+            self.health_server = HealthServer(
+                snapshot_fn=self.health_snapshot,
+                metrics_fn=self.render_prometheus_metrics,
+            )
             return self.health_server.start(host=host, port=port)
         except Exception as e:
             logger.warning(f"health server start failed: {e}")
@@ -1177,6 +1209,106 @@ class OpsAgent:
             except Exception:
                 pass
             self.health_server = None
+
+    # ═══════════════════════════════════════════
+    #  Sprint 6: 审计 / 通知 / Metrics
+    # ═══════════════════════════════════════════
+
+    def _emit_audit(self, event_type: str, **kwargs) -> None:
+        if not self.audit:
+            return
+        try:
+            kwargs.setdefault("target", getattr(self.current_target, "name", ""))
+            if self.current_incident:
+                kwargs.setdefault("incident", self.current_incident)
+            self.audit.record(event_type, **kwargs)
+        except Exception as e:
+            logger.debug(f"audit emit failed: {e}")
+
+        if event_type == "action_executed":
+            tgt = kwargs.get("target", "")
+            kind = kwargs.get("kind", "unknown")
+            key = (tgt, kind)
+            self._counter_actions[key] = self._counter_actions.get(key, 0) + 1
+        elif event_type in ("incident_opened", "incident_closed"):
+            tgt = kwargs.get("target", "")
+            status = "opened" if event_type == "incident_opened" else "closed"
+            key = (tgt, status)
+            self._counter_incidents[key] = self._counter_incidents.get(key, 0) + 1
+
+    def _emit_notify(self, event_type: str, title: str, content: str,
+                     urgency: str = "info") -> bool:
+        if not self.notifier:
+            return False
+        try:
+            return self.notifier.maybe_notify(event_type, title, content, urgency)
+        except Exception as e:
+            logger.debug(f"notify failed: {e}")
+            return False
+
+    def render_prometheus_metrics(self) -> str:
+        try:
+            lines = []
+            lines.append("# HELP ops_agent_uptime_seconds Agent uptime")
+            lines.append("# TYPE ops_agent_uptime_seconds gauge")
+            lines.append(f"ops_agent_uptime_seconds {time.time() - self.start_time:.0f}")
+
+            lines.append("# HELP ops_agent_mode Current mode")
+            lines.append("# TYPE ops_agent_mode gauge")
+            lines.append(f'ops_agent_mode{{mode="{self.mode}"}} 1')
+
+            lines.append("# HELP ops_agent_llm_degraded LLM degraded state")
+            lines.append("# TYPE ops_agent_llm_degraded gauge")
+            lines.append(f"ops_agent_llm_degraded {1 if self.llm_degraded else 0}")
+
+            lines.append("# HELP ops_agent_actions_total Actions executed")
+            lines.append("# TYPE ops_agent_actions_total counter")
+            for (tgt, kind), v in self._counter_actions.items():
+                lines.append(
+                    f'ops_agent_actions_total{{target="{tgt}",kind="{kind}"}} {v}'
+                )
+
+            lines.append("# HELP ops_agent_incidents_total Incidents by status")
+            lines.append("# TYPE ops_agent_incidents_total counter")
+            for (tgt, status), v in self._counter_incidents.items():
+                lines.append(
+                    f'ops_agent_incidents_total{{target="{tgt}",status="{status}"}} {v}'
+                )
+
+            try:
+                s = self.limits.status() or {}
+                if "tokens_last_hour" in s:
+                    lines.append("# HELP ops_agent_llm_tokens_last_hour Tokens used last hour")
+                    lines.append("# TYPE ops_agent_llm_tokens_last_hour gauge")
+                    lines.append(f"ops_agent_llm_tokens_last_hour {s['tokens_last_hour']}")
+                if "active_incidents" in s:
+                    lines.append("# HELP ops_agent_active_incidents Concurrent incidents")
+                    lines.append("# TYPE ops_agent_active_incidents gauge")
+                    lines.append(f"ops_agent_active_incidents {s['active_incidents']}")
+            except Exception:
+                pass
+
+            if self.pending_queue:
+                lines.append("# HELP ops_agent_pending_events Pending events")
+                lines.append("# TYPE ops_agent_pending_events gauge")
+                lines.append(f"ops_agent_pending_events {self.pending_queue.size()}")
+
+            return "\n".join(lines) + "\n"
+        except Exception as e:
+            return f"# error rendering metrics: {e}\n"
+
+    def maybe_send_daily_report(self) -> bool:
+        if not self.reporter:
+            return False
+        try:
+            if self.reporter.should_send_today():
+                ok = self.reporter.send_report_for()
+                if ok:
+                    self._emit_audit("daily_report_sent")
+                return ok
+        except Exception as e:
+            logger.debug(f"daily report failed: {e}")
+        return False
 
     def _plan(self, diagnosis: dict) -> ActionPlan | None:
         """制定修复方案"""
