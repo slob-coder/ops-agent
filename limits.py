@@ -44,6 +44,9 @@ class LimitsConfig:
     llm_tokens_per_day: int = 1_000_000
     llm_tokens_per_hour: int = 200_000
 
+    # Sprint 4: 自动合并 PR 的硬上限
+    max_auto_merges_per_day: int = 5
+
     # 总开关
     enabled: bool = True
 
@@ -83,6 +86,8 @@ class LimitsEngine:
         self._last_failure_time: float = 0.0
         # token 计数
         self._token_times: deque = deque()  # (timestamp, tokens) tuples
+        # Sprint 4: 自动合并次数
+        self._auto_merge_times: deque = deque()
 
     # ── 工具函数 ──
 
@@ -212,6 +217,25 @@ class LimitsEngine:
     def record_tokens(self, tokens: int):
         with self._lock:
             self._token_times.append((time.time(), tokens))
+
+    def check_auto_merge(self) -> tuple[bool, str]:
+        """Sprint 4: 检查是否允许再做一次自动 PR 合并"""
+        if not self.config.enabled:
+            return True, ""
+        with self._lock:
+            count_24h = self._count_in_window(self._auto_merge_times, 86400)
+            limit = self.config.max_auto_merges_per_day
+            if count_24h >= limit:
+                return False, (
+                    f"今日自动合并已达上限 ({count_24h}/{limit})。"
+                    f"为防止失控,Agent 每天最多自动合并 {limit} 个 PR。"
+                )
+        return True, ""
+
+    def record_auto_merge(self):
+        """Sprint 4: 记录一次自动合并"""
+        with self._lock:
+            self._auto_merge_times.append(time.time())
 
     # ── 状态查询 ──
 

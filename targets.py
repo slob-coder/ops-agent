@@ -36,6 +36,15 @@ class SourceRepo:
     path_prefix_runtime: str = ""          # 运行时前缀 "/app"
     path_prefix_local: str = ""            # 本地前缀(相对 path,通常为 "")
 
+    # Sprint 4: PR 工作流 + 部署观察
+    git_host: str = ""                     # github | gitlab | noop | "" (禁用自动 PR)
+    base_branch: str = "main"              # PR 目标分支
+    deploy_signal: dict = field(default_factory=dict)
+    # deploy_signal 形如:
+    #   {"type": "http", "url": "http://web/version", "expect_contains": "{commit_sha}",
+    #    "check_interval": 10, "timeout": 1800}
+    # 或 {"type": "fixed_wait", "seconds": 60}
+
     @classmethod
     def from_dict(cls, d: dict) -> "SourceRepo":
         """从 dict 构造,兼容 yaml 加载和旧版配置"""
