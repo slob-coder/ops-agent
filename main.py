@@ -99,6 +99,21 @@ class OpsAgent:
         self._running = True
         self._prompts = {}
 
+        # ── Sprint 3: 补丁生成与本地验证 ──
+        self._last_locate_result = None  # Sprint 2 在 _diagnose 中填充
+        try:
+            from patch_generator import PatchGenerator
+            from patch_applier import PatchApplier
+            from patch_loop import PatchLoop
+            self.patch_loop = PatchLoop(
+                generator=PatchGenerator(self.llm),
+                applier=PatchApplier(),
+                logger_fn=lambda msg: self.chat.log(msg) if self.chat else logger.info(msg),
+            )
+        except Exception as e:
+            logger.warning(f"PatchLoop init failed (Sprint 3 disabled): {e}")
+            self.patch_loop = None
+
     def _switch_target(self, name: str) -> bool:
         """切换当前激活的目标"""
         if name not in self.toolboxes:
@@ -492,6 +507,13 @@ class OpsAgent:
             self.current_issue = ""
             return
 
+        # ── Sprint 3: 本地补丁生成与验证(条件触发) ──
+        self._maybe_run_patch_loop(diagnosis)
+
+        # 补丁循环后允许人类插话
+        if self._drain_human_messages():
+            return
+
         # ── 制定方案 ──
         self.mode = self.INCIDENT
         action_plan = self._plan(diagnosis)
@@ -683,6 +705,7 @@ class OpsAgent:
         locate_result, parsed = self._locate_source_from_text(
             (observations or "") + "\n" + (summary or "")
         )
+        self._last_locate_result = locate_result  # Sprint 3 picks this up
         if locate_result and locate_result.locations:
             source_text = locate_result.render()
             top = locate_result.locations[0]
@@ -721,6 +744,76 @@ class OpsAgent:
 
         response = self._ask_llm(prompt)
         return self._parse_diagnosis(response)
+
+    def _maybe_run_patch_loop(self, diagnosis: dict) -> None:
+        """Sprint 3: 如果诊断为 code_bug 且有源码定位,触发补丁生成 + 本地验证
+
+        失败/跳过都不会中断主流程。所有结果只写入当前 Incident 笔记。
+        """
+        if not self.patch_loop or self.readonly:
+            return
+        if diagnosis.get("type") != "code_bug":
+            return
+        result = self._last_locate_result
+        if not result or not result.locations:
+            return
+
+        # 选第一个定位的 location 所属的 repo
+        repo_name = result.locations[0].repo_name
+        repos = []
+        try:
+            repos = self.current_target.get_source_repos()
+        except Exception:
+            pass
+        repo = next((r for r in repos if r.name == repo_name), None)
+        if not repo:
+            self.chat.log(f"PatchLoop: 找不到 repo {repo_name},跳过")
+            return
+        if not getattr(repo, "build_cmd", ""):
+            self.chat.log(f"PatchLoop: repo {repo_name} 未配置 build_cmd,跳过")
+            return
+
+        self.chat.say("检测到代码 bug,启动本地补丁生成与验证...", "info")
+        try:
+            verified = self.patch_loop.run(
+                diagnosis=diagnosis,
+                locations=result.locations,
+                repo=repo,
+                incident_id=self.current_incident or "incident",
+            )
+        except Exception as e:
+            logger.exception("patch loop crashed")
+            self.chat.say(f"补丁循环异常: {e}", "warning")
+            return
+
+        if verified:
+            note = (
+                f"\n## 自动补丁(本地已验证)\n"
+                f"- 仓库: {repo.name}\n"
+                f"- 分支: {verified.result.branch_name}\n"
+                f"- Commit: {verified.result.commit_sha[:12]}\n"
+                f"- 阶段: {verified.result.stage}\n"
+                f"- 尝试次数: {verified.attempts}/3\n"
+                f"- 修改说明: {verified.patch.description[:300]}\n"
+                f"- 修改文件: {', '.join(verified.patch.files_changed)}\n"
+                f"- 状态: 等待 Sprint 4 推送至远端 / 创建 PR\n"
+            )
+            try:
+                self.notebook.append_to_incident(self.current_incident, note)
+            except Exception:
+                pass
+            self.chat.say(
+                f"✓ 补丁本地验证通过 ({verified.result.short_summary()})", "success"
+            )
+        else:
+            try:
+                self.notebook.append_to_incident(
+                    self.current_incident,
+                    "\n## 自动补丁(失败)\n三次尝试都未通过本地验证,继续走常规修复流程。\n",
+                )
+            except Exception:
+                pass
+            self.chat.say("✗ 补丁循环三次都未通过,降级走常规修复", "warning")
 
     def _plan(self, diagnosis: dict) -> ActionPlan | None:
         """制定修复方案"""
@@ -1194,7 +1287,10 @@ class OpsAgent:
             "confidence": 50,
             "gaps": "",
             "escalate": "NO",
+            "type": "unknown",
         }
+
+        valid_types = {"code_bug", "runtime", "config", "resource", "external", "unknown"}
 
         sections = re.split(r"###?\s+", response)
         for section in sections:
@@ -1212,6 +1308,12 @@ class OpsAgent:
                 result["gaps"] = section.strip()
             elif "人类" in lower or "escalate" in lower:
                 result["escalate"] = "YES" if "YES" in section.upper() else "NO"
+            elif "类型" in lower or section.lstrip().lower().startswith("type"):
+                # 抓第一个出现的合法关键词
+                for vt in valid_types:
+                    if re.search(rf"\b{vt}\b", section):
+                        result["type"] = vt
+                        break
 
         return result
 
