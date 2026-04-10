@@ -1,0 +1,17 @@
+[Unit]
+Description=OpsAgent — autonomous ops engineer
+After=network.target
+
+[Service]
+Type=simple
+User=ops
+WorkingDirectory=/opt/ops-agent
+Environment=OPS_LLM_PROVIDER=anthropic
+ExecStart=/usr/bin/python3 main.py --notebook /var/lib/ops-agent/notebook
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

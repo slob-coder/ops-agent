@@ -15,6 +15,75 @@ class LLMInterrupted(Exception):
     pass
 
 
+class LLMDegraded(Exception):
+    """Sprint 5: LLM 连续失败,Agent 应进入降级模式"""
+    pass
+
+
+class RetryingLLM:
+    """Sprint 5: 包装任何 .ask(prompt, system, ...) 兼容对象,加入重试与降级语义。
+
+    - LLMInterrupted 立即透传(不算失败)
+    - 其他异常 → 指数退避重试 max_attempts 次
+    - 用尽后抛 LLMDegraded,并把 degraded 标志置为 True
+    - 下次成功调用会自动复位 degraded
+    - 失败/恢复都通过 on_state_change 回调通知主进程
+
+    所有外部依赖(sleep / on_state_change)都可注入,方便测试。
+    """
+
+    def __init__(self, inner, max_attempts: int = 3,
+                 base_backoff: float = 1.0,
+                 sleep_fn=None, on_state_change=None):
+        self._inner = inner
+        self.max_attempts = max_attempts
+        self.base_backoff = base_backoff
+        self._sleep = sleep_fn or __import__("time").sleep
+        self._on_state_change = on_state_change or (lambda old, new, info: None)
+        self.degraded: bool = False
+        self.consecutive_failures: int = 0
+        self.last_failure: str = ""
+
+    def ask(self, prompt: str, system: str = "", max_tokens: int = 4096,
+            interrupt_check=None) -> str:
+        last_err: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                result = self._inner.ask(
+                    prompt, system=system, max_tokens=max_tokens,
+                    interrupt_check=interrupt_check,
+                )
+                # 成功 → 复位
+                if self.degraded:
+                    self.degraded = False
+                    self._on_state_change(True, False, "recovered")
+                self.consecutive_failures = 0
+                self.last_failure = ""
+                return result
+            except LLMInterrupted:
+                raise  # 不算失败
+            except Exception as e:
+                last_err = e
+                self.consecutive_failures += 1
+                self.last_failure = f"{type(e).__name__}: {e}"
+                logger.warning(
+                    f"LLM call failed (attempt {attempt}/{self.max_attempts}): "
+                    f"{self.last_failure}"
+                )
+                if attempt < self.max_attempts:
+                    backoff = self.base_backoff * (2 ** (attempt - 1))
+                    self._sleep(min(backoff, 60))
+
+        # 用尽
+        was_degraded = self.degraded
+        self.degraded = True
+        if not was_degraded:
+            self._on_state_change(False, True, self.last_failure)
+        raise LLMDegraded(
+            f"LLM 连续 {self.max_attempts} 次失败: {self.last_failure}"
+        ) from last_err
+
+
 class LLMClient:
     """统一的 LLM 调用接口"""
 

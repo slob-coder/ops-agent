@@ -24,7 +24,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-from llm import LLMClient, LLMInterrupted
+from llm import LLMClient, LLMInterrupted, LLMDegraded
 from notebook import Notebook
 from tools import ToolBox, TargetConfig, CommandInterrupted
 from trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
@@ -125,6 +125,21 @@ class OpsAgent:
             logger.warning(f"Sprint 4 watchers init failed: {e}")
             self.deploy_watcher = None
             self.prod_watcher = None
+
+        # ── Sprint 5: 可靠性 ──
+        self.start_time = time.time()
+        self.last_loop_time = 0.0
+        self.state_path = str(Path(notebook_path) / "state.json")
+        try:
+            from pending_events import PendingEventQueue
+            self.pending_queue = PendingEventQueue(
+                str(Path(notebook_path) / "pending-events.jsonl")
+            )
+        except Exception as e:
+            logger.warning(f"pending queue init failed: {e}")
+            self.pending_queue = None
+        self.health_server = None
+        self.llm_degraded = False
 
     def _switch_target(self, name: str) -> bool:
         """切换当前激活的目标"""
@@ -373,12 +388,31 @@ class OpsAgent:
     def run(self):
         """永不停歇的主循环"""
         self.chat.banner("OpsAgent")
+        # Sprint 5: 崩溃恢复
+        try:
+            recovered = self.recover_state()
+            if recovered:
+                self.chat.say(
+                    f"⚠️ 检测到上次未完成的工作 (incident={self.current_incident})"
+                    f",已恢复状态",
+                    "warning",
+                )
+        except Exception as e:
+            logger.warning(f"recover_state crashed: {e}")
+        # Sprint 5: 启动健康检查端点
+        try:
+            self.start_health_server()
+        except Exception as e:
+            logger.warning(f"start_health_server crashed: {e}")
+
         self.onboard()
         self.chat.say("已上岗，进入巡检模式。", "success")
 
         while self._running:
             try:
                 self._loop_once()
+                self.last_loop_time = time.time()
+                self.save_state()  # Sprint 5: 每轮 checkpoint
             except KeyboardInterrupt:
                 self.chat.say("收到退出信号，下班了。", "info")
                 break
@@ -396,11 +430,23 @@ class OpsAgent:
                 self.current_issue = ""
                 # 处理触发中断的人类消息
                 self._drain_human_messages()
+            except LLMDegraded as e:
+                # Sprint 5: LLM 不可用 → 降级到只读 + 持续告警
+                logger.error(f"LLM degraded: {e}")
+                if not self.llm_degraded:
+                    self.llm_degraded = True
+                    self.readonly = True
+                    self.chat.escalate(
+                        "LLM 调用持续失败,已切换到只读模式",
+                        f"原因: {e}\n我会每 5 分钟尝试自动恢复。请检查 API key / 网络。",
+                    )
+                self._interruptible_sleep(300)
             except Exception as e:
                 logger.error(f"主循环异常: {e}", exc_info=True)
                 self.chat.say(f"我遇到了内部错误：{e}，继续工作。", "warning")
                 self._interruptible_sleep(10)
 
+        self.stop_health_server()
         self.chat.stop()
 
     def _interruptible_sleep(self, seconds: float):
@@ -1031,6 +1077,106 @@ class OpsAgent:
             self.notebook.append_to_incident(self.current_incident, f"- {text}\n")
         except Exception:
             pass
+
+    # ═══════════════════════════════════════════
+    #  Sprint 5: 状态持久化 / 崩溃恢复 / 健康检查
+    # ═══════════════════════════════════════════
+
+    def _build_state_snapshot(self):
+        """构造当前 AgentState"""
+        from state import AgentState
+        return AgentState(
+            mode=self.mode,
+            current_target_name=getattr(self.current_target, "name", "") or "",
+            current_incident=self.current_incident or "",
+            current_issue=self.current_issue or "",
+            paused=self.paused,
+            readonly=self.readonly,
+            last_error_text=self._last_error_text or "",
+            auto_merge_timestamps=list(getattr(self.limits, "_auto_merge_times", [])),
+        )
+
+    def save_state(self) -> bool:
+        """checkpoint 当前状态。失败静默。"""
+        try:
+            return self._build_state_snapshot().save(self.state_path)
+        except Exception as e:
+            logger.debug(f"save_state failed: {e}")
+            return False
+
+    def recover_state(self) -> bool:
+        """启动时尝试恢复上次状态。返回是否成功恢复了未完成的工作。"""
+        try:
+            from state import AgentState
+            prev = AgentState.load(self.state_path)
+        except Exception as e:
+            logger.debug(f"recover_state load failed: {e}")
+            return False
+        if not prev:
+            return False
+        try:
+            # 仅恢复"软状态" — 模式 / readonly / paused / 当前 incident 引用
+            if prev.current_target_name and prev.current_target_name in self.toolboxes:
+                self._switch_target(prev.current_target_name)
+            self.mode = prev.mode or self.PATROL
+            self.paused = prev.paused
+            self.readonly = self.readonly or prev.readonly
+            self.current_incident = prev.current_incident or None
+            self.current_issue = prev.current_issue or ""
+            self._last_error_text = prev.last_error_text or ""
+            # 重放自动合并计数(粗略地把时间戳塞回 deque)
+            for ts in prev.auto_merge_timestamps:
+                try:
+                    self.limits._auto_merge_times.append(float(ts))
+                except Exception:
+                    pass
+            return prev.has_active_work()
+        except Exception as e:
+            logger.warning(f"recover_state apply failed: {e}")
+            return False
+
+    def health_snapshot(self) -> dict:
+        """供 HealthServer 调用的只读快照"""
+        try:
+            active_count = 0
+            try:
+                active_count = len(self.notebook.list_dir("incidents/active"))
+            except Exception:
+                pass
+            return {
+                "status": "degraded" if self.llm_degraded else "ok",
+                "mode": self.mode,
+                "uptime": time.time() - self.start_time,
+                "current_target": getattr(self.current_target, "name", ""),
+                "current_incident": self.current_incident or "",
+                "active_incidents": active_count,
+                "paused": self.paused,
+                "readonly": self.readonly,
+                "last_loop_time": self.last_loop_time,
+                "llm_degraded": self.llm_degraded,
+                "pending_events": (self.pending_queue.size()
+                                    if self.pending_queue else 0),
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def start_health_server(self, host: str = "127.0.0.1", port: int = 9876) -> bool:
+        """启动健康检查后台线程。失败返回 False。"""
+        try:
+            from health import HealthServer
+            self.health_server = HealthServer(snapshot_fn=self.health_snapshot)
+            return self.health_server.start(host=host, port=port)
+        except Exception as e:
+            logger.warning(f"health server start failed: {e}")
+            return False
+
+    def stop_health_server(self):
+        if self.health_server:
+            try:
+                self.health_server.stop()
+            except Exception:
+                pass
+            self.health_server = None
 
     def _plan(self, diagnosis: dict) -> ActionPlan | None:
         """制定修复方案"""

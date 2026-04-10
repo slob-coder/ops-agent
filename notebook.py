@@ -14,8 +14,9 @@ logger = logging.getLogger("ops-agent.notebook")
 class Notebook:
     """Agent 的笔记本 —— 文件系统 + git 的薄封装"""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, remote_url: str = ""):
         self.path = Path(path).resolve()
+        self.remote_url = remote_url
         self._ensure_init()
 
     def _ensure_init(self):
@@ -160,3 +161,86 @@ class Notebook:
             f"conversations/{today}.md",
             f"**[{ts}] {role}**: {message}",
         )
+
+    # ── Sprint 5: 完整性校验与远端备份 ──
+
+    def verify_integrity(self) -> tuple[bool, str]:
+        """校验 git 仓库完整性。返回 (是否健康, 错误描述)"""
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(self.path), "fsck", "--no-progress"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return False, (result.stderr or result.stdout or "fsck failed").strip()
+            return True, ""
+        except subprocess.TimeoutExpired:
+            return False, "git fsck timeout"
+        except FileNotFoundError:
+            return False, "git not found"
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+
+    def push_to_remote(self) -> tuple[bool, str]:
+        """推送笔记到远端。失败只记日志,不抛异常。"""
+        if not self.remote_url:
+            return False, "no remote configured"
+        try:
+            # 确保 remote 已配置
+            existing = subprocess.run(
+                ["git", "-C", str(self.path), "remote"],
+                capture_output=True, text=True,
+            ).stdout
+            if "origin" not in existing.split():
+                subprocess.run(
+                    ["git", "-C", str(self.path), "remote", "add", "origin",
+                     self.remote_url],
+                    capture_output=True, text=True, check=False,
+                )
+            result = subprocess.run(
+                ["git", "-C", str(self.path), "push", "-u", "origin", "HEAD"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return False, (result.stderr or "").strip()
+            return True, "ok"
+        except subprocess.TimeoutExpired:
+            return False, "push timeout"
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+
+    def restore_from_remote(self) -> tuple[bool, str]:
+        """笔记损坏时尝试从远端拉取覆盖恢复。"""
+        if not self.remote_url:
+            return False, "no remote configured"
+        try:
+            # 移走损坏目录(只移走 .git,文件保留作为参考)
+            broken = self.path / ".git.broken"
+            if (self.path / ".git").exists():
+                if broken.exists():
+                    import shutil
+                    shutil.rmtree(broken)
+                (self.path / ".git").rename(broken)
+            # 重新 init + fetch + reset
+            subprocess.run(["git", "-C", str(self.path), "init", "-q"], check=True)
+            subprocess.run(
+                ["git", "-C", str(self.path), "remote", "add", "origin",
+                 self.remote_url],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(self.path), "fetch", "origin"],
+                capture_output=True, text=True, timeout=120, check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(self.path), "reset", "--hard",
+                 "origin/HEAD"],
+                capture_output=True, text=True, check=True,
+            )
+            return True, "restored"
+        except subprocess.TimeoutExpired:
+            return False, "fetch timeout"
+        except subprocess.CalledProcessError as e:
+            return False, f"git failed: {e}"
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
