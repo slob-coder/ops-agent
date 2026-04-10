@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════════
+# OpsAgent 目标系统配置
+# ═══════════════════════════════════════════════════════════════
+#
+# 在这里定义 Agent 需要管理的目标。Agent 会用一个统一的循环
+# 同时巡检所有目标。
+#
+# 支持的 type:
+#   - local       本地工作站
+#   - ssh         远程 Linux 服务器
+#   - docker      Docker 主机(本地或远程)
+#   - k8s         Kubernetes 集群
+#
+# 每个 target 必须有唯一的 name。其他字段按 type 决定填什么。
+# ═══════════════════════════════════════════════════════════════
+
+targets:
+
+  # ─── 示例 1:一台远程 Linux 服务器 ───
+  - name: web-prod
+    type: ssh
+    description: "生产 web 服务器,跑着 nginx + 一个 Java 后端"
+    criticality: high
+    tags: [linux, web]
+    host: ubuntu@10.0.0.10
+    port: 22
+    # SSH 认证(三选一):
+    # key_file: ~/.ssh/id_rsa
+    # password_env: WEB_PROD_PASSWORD     # 从环境变量读密码
+    # 或留空使用 ~/.ssh/config 里的配置
+    key_file: ~/.ssh/id_rsa
+
+    # 如果这台机器上有源代码,Agent 可以修 bug:
+    source_repos:
+      - name: backend
+        path: /opt/sources/backend          # 源码 clone 的本地路径(在 Agent 工作站上)
+        repo_url: git@github.com:mycompany/backend.git
+        branch: main
+        language: java
+        build_cmd: mvn clean compile        # 编译验证命令
+        test_cmd: mvn test                  # 测试验证命令
+        deploy_signal: /opt/backend/.deploy_done  # 部署完成的信号文件(可选)
+        # 该仓库的代码对应运行时的什么进程/服务:
+        runtime_service: backend            # systemctl 服务名,用于部署后重启
+        log_path: /opt/backend/logs/app.log
+
+  # ─── 示例 2:本地 Docker(最适合开发/测试)───
+  - name: local-docker
+    type: docker
+    description: "本地 docker-compose 项目"
+    criticality: normal
+    tags: [docker, dev]
+    docker_host: ""                          # 留空 = 本地 unix socket
+    compose_file: ./docker-compose.yaml      # 可选,有了能用 docker compose 命令
+
+    source_repos:
+      - name: my-app
+        path: /home/me/projects/my-app
+        repo_url: git@github.com:me/my-app.git
+        branch: main
+        language: python
+        build_cmd: python -m py_compile $(find . -name "*.py")
+        test_cmd: pytest -x
+        runtime_service: my-app              # docker compose 服务名
+        log_path: ""                         # docker logs 自动获取
+
+  # ─── 示例 3:K8s 集群 ───
+  - name: prod-k8s
+    type: k8s
+    description: "生产 K8s 集群"
+    criticality: critical
+    tags: [k8s, prod]
+    kubeconfig: ~/.kube/config
+    context: prod-cluster
+    namespace: default
+
+    source_repos:
+      - name: api-gateway
+        path: /opt/sources/api-gateway
+        repo_url: git@gitlab.com:mycompany/api-gateway.git
+        branch: main
+        language: go
+        build_cmd: go build ./...
+        test_cmd: go test ./...
+        runtime_service: api-gateway         # K8s deployment 名
+        # K8s 模式下重启 = kubectl rollout restart

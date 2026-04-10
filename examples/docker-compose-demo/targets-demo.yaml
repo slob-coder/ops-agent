@@ -1,0 +1,32 @@
+# Demo 配套的 targets.yaml
+# 复制到 notebook/config/targets.yaml 即可使用
+#
+# 用法:
+#   1. cd examples/docker-compose-demo
+#   2. docker compose up -d
+#   3. cp targets-demo.yaml ../../notebook/config/targets.yaml
+#   4. cd ../..
+#   5. python main.py
+#   6. 在另一个终端: curl http://localhost:8080/leak  (触发故障)
+#   7. 看 OpsAgent 在原终端如何反应
+
+targets:
+  - name: demo-docker
+    type: docker
+    description: |
+      本地 docker-compose 演示项目。包含两个容器:
+      - flaky-app: Flask 服务,端口 5000,有故障开关
+      - demo-nginx: nginx 反代,对外端口 8080
+      容器名: flaky-app, demo-nginx
+    criticality: normal
+    tags: [demo, docker]
+    compose_file: ./examples/docker-compose-demo/docker-compose.yaml
+
+    source_repos:
+      - name: flaky-app
+        path: ./examples/docker-compose-demo/flaky-app
+        language: python
+        build_cmd: python -m py_compile app.py
+        test_cmd: ""        # demo 没写测试
+        runtime_service: flaky-app
+        log_path: ""        # 用 docker logs

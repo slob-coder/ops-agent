@@ -54,20 +54,65 @@ class OpsAgent:
         "incident": 2,
     }
 
-    def __init__(self, notebook_path: str, target: TargetConfig, readonly: bool = False):
+    def __init__(self, notebook_path: str, targets: list = None,
+                 readonly: bool = False, fallback_target=None):
+        """
+        参数:
+            notebook_path: Notebook 目录
+            targets: list[TargetConfig],多个目标。如果为空,使用 fallback_target
+            readonly: 只读模式
+            fallback_target: 当 targets 为空时的兜底目标(用于命令行 --target 启动)
+        """
         self.notebook = Notebook(notebook_path)
-        self.tools = ToolBox(target)
         self.llm = LLMClient()
         self.trust = TrustEngine(self.notebook, self.llm)
         self.chat = HumanChannel(self.notebook)
 
+        # ── 多目标管理 ──
+        if not targets:
+            targets = [fallback_target or TargetConfig.local()]
+        self.targets: list[TargetConfig] = targets
+        self.toolboxes: dict[str, ToolBox] = {
+            t.name: ToolBox(t) for t in targets
+        }
+        # 当前正在巡检的目标索引(round-robin)
+        self._target_index = 0
+        # 当前激活的目标(_loop_once 期间使用)
+        self.current_target: TargetConfig = targets[0]
+        self.tools: ToolBox = self.toolboxes[targets[0].name]
+
+        # ── 限制引擎 ──
+        from limits import LimitsEngine, LimitsConfig
+        limits_path = str(Path(notebook_path) / "config" / "limits.yaml")
+        self.limits = LimitsEngine(LimitsConfig.from_yaml(limits_path))
+
+        # ── 紧急停止 ──
+        from safety import EmergencyStop
+        self.emergency = EmergencyStop(notebook_path)
+
+        # ── 状态 ──
         self.mode = self.PATROL
         self.readonly = readonly
-        self.paused = False              # 暂停状态：暂停后只响应人类，不自主巡检
-        self.current_incident = None     # 当前活跃 Incident 文件名
-        self.current_issue = ""          # 当前正在调查的问题描述
+        self.paused = False
+        self.current_incident = None
+        self.current_issue = ""
         self._running = True
         self._prompts = {}
+
+    def _switch_target(self, name: str) -> bool:
+        """切换当前激活的目标"""
+        if name not in self.toolboxes:
+            return False
+        self.current_target = next(t for t in self.targets if t.name == name)
+        self.tools = self.toolboxes[name]
+        return True
+
+    def _next_target(self):
+        """轮询切换到下一个目标(round-robin)"""
+        self._target_index = (self._target_index + 1) % len(self.targets)
+        target = self.targets[self._target_index]
+        self.current_target = target
+        self.tools = self.toolboxes[target.name]
 
     # ═══════════════════════════════════════════
     #  Prompt 管理
@@ -92,24 +137,95 @@ class OpsAgent:
     def _build_system_prompt(self) -> str:
         """构建 system prompt —— Agent 的完整自我认知
 
-        每次 LLM 调用都会带上这个 system prompt，让 LLM 知道：
-        - 我是谁（角色、身份）
-        - 我现在在做什么（工作模式、活跃 Incident）
-        - 我有什么工具（可用的 shell 命令、信任等级）
-        - 我的行为准则（授权规则、输出规范）
-        - 我负责的系统长什么样（system-map）
+        每次 LLM 调用都会带上这个 system prompt,让 LLM 知道:
+        - 我是谁
+        - 我现在管什么目标(类型、连接方式)
+        - 我现在在做什么(工作模式、活跃 Incident)
+        - 我有什么工具
+        - 我的行为准则和数值约束
+        - 系统拓扑
         """
         system_map = self.notebook.read("system-map.md")
         permissions = self.notebook.read("config/permissions.md")
 
+        # ── 当前目标信息 ──
+        target_info = self._build_target_context()
+
+        # ── 限制状态 ──
+        limits_status = self._build_limits_context()
+
         return self._fill_prompt(
             "system",
             mode=self.mode,
-            readonly="是（只读模式，不执行任何修改操作）" if self.readonly else "否",
+            readonly="是(只读模式,不执行任何修改操作)" if self.readonly else "否",
             active_incident=self.current_incident or "无",
-            permissions=permissions or "（未配置，使用默认策略）",
-            system_map=system_map or "（尚未探索，系统拓扑未知）",
+            permissions=permissions or "(未配置,使用默认策略)",
+            system_map=system_map or "(尚未探索,系统拓扑未知)",
+            target_info=target_info,
+            limits_status=limits_status,
         )
+
+    def _build_target_context(self) -> str:
+        """生成当前目标的描述,告诉 LLM 用什么命令前缀"""
+        t = self.current_target
+        lines = [f"当前正在管理的目标: **{t.name}** (类型: {t.mode})"]
+        if t.description:
+            lines.append(f"描述: {t.description}")
+
+        if t.mode == "ssh":
+            lines.append(f"连接方式: SSH 到 {t.host}")
+            lines.append("命令直接写 shell,Agent 会自动通过 SSH 在远端执行。")
+        elif t.mode == "docker":
+            lines.append(f"连接方式: Docker {'(本地)' if not t.docker_host else f'({t.docker_host})'}")
+            lines.append("命令运行在工作站本地。要操作容器请用:")
+            lines.append("  - `docker ps` / `docker logs <容器名> --tail 100`")
+            lines.append("  - `docker exec <容器名> <命令>` 进入容器执行")
+            lines.append("  - `docker restart <容器名>` 重启容器")
+            lines.append("  - `docker inspect <容器名>` 查看详情")
+            if t.compose_file:
+                lines.append(f"  - 有 compose 文件: `docker compose -f {t.compose_file} <命令>`")
+        elif t.mode == "k8s":
+            lines.append(f"连接方式: Kubernetes (context={t.kubectl_context}, ns={t.namespace})")
+            lines.append("命令运行在工作站本地。要操作集群请用:")
+            lines.append(f"  - `kubectl get pods -n {t.namespace}` / `kubectl get all`")
+            lines.append(f"  - `kubectl logs <pod> -n {t.namespace} --tail=100`")
+            lines.append(f"  - `kubectl describe pod <pod> -n {t.namespace}`")
+            lines.append(f"  - `kubectl exec <pod> -n {t.namespace} -- <命令>`")
+            lines.append(f"  - `kubectl rollout restart deployment/<名> -n {t.namespace}` 滚动重启")
+        else:
+            lines.append("连接方式: 本地工作站")
+
+        # 列出该目标管理的所有目标(让 LLM 知道还可以切换)
+        if len(self.targets) > 1:
+            others = [t.name for t in self.targets if t.name != self.current_target.name]
+            lines.append(f"\n你还管理着其他目标: {', '.join(others)}")
+            lines.append("(每轮巡检会自动轮换。如果人类问起其他目标,你需要先用相应的命令前缀)")
+
+        # 源码地图
+        if self.current_target.source_repos:
+            lines.append("\n这台目标对应的源代码:")
+            for repo in self.current_target.source_repos:
+                lines.append(
+                    f"  - {repo.get('name', '?')}: {repo.get('language', '?')},"
+                    f" 路径 {repo.get('path', '?')}"
+                )
+
+        return "\n".join(lines)
+
+    def _build_limits_context(self) -> str:
+        """生成限制状态摘要"""
+        s = self.limits.status()
+        if not s["enabled"]:
+            return "(限制引擎已禁用)"
+        lines = [
+            f"动作配额: 本小时已用 {s['actions_last_hour']}/{s['max_actions_per_hour']},"
+            f" 今日已用 {s['actions_last_day']}",
+            f"并发 Incident: {s['active_incidents']}/{s['max_concurrent']}",
+            f"Token 用量(本小时): {s['tokens_last_hour']}/{s['tokens_per_hour_budget']}",
+        ]
+        if s["in_cooldown"]:
+            lines.append(f"⚠️ 处于失败冷却期,还需 {s['cooldown_remaining']} 秒")
+        return "\n".join(lines)
 
     def _ask_llm(self, prompt: str, max_tokens: int = 4096,
                  allow_interrupt: bool = True) -> str:
@@ -295,13 +411,26 @@ class OpsAgent:
         if self._drain_human_messages():
             return
 
+        # ── 紧急停止检查 ──
+        frozen, reason = self.emergency.check()
+        if frozen and not self.readonly:
+            self.readonly = True
+            self.chat.say(f"🚨 紧急停止已激活: {reason}。已切换到只读模式。", "critical")
+        elif not frozen and self.readonly and self.current_incident is None:
+            # 文件被删了,自动解冻(仅当没有 incident 在处理时)
+            pass
+
         # ── 暂停态：只响应人类，不主动巡检 ──
         if self.paused:
             self._interruptible_sleep(1)
             return
 
+        # ── 多目标轮询：每轮切换到下一个目标 ──
+        if self.mode == self.PATROL and len(self.targets) > 1:
+            self._next_target()
+
         # ── 感知 ──
-        self.chat.log(f"巡检中...（mode={self.mode}）")
+        self.chat.log(f"巡检中... [target={self.current_target.name}, mode={self.mode}]")
         observations = self._observe()
 
         # 巡检过程中可能有人插话
@@ -329,13 +458,17 @@ class OpsAgent:
         summary = assessment.get("summary", "发现异常")
         self.current_issue = summary
 
-        self.chat.notify(f"发现异常（严重度 {severity}/10）：{summary}", "warning")
+        self.chat.notify(f"[{self.current_target.name}] 发现异常（严重度 {severity}/10）：{summary}", "warning")
         self.mode = self.INVESTIGATE
 
         # 创建 Incident
-        self.current_incident = self.notebook.create_incident(summary[:40])
+        self.current_incident = self.notebook.create_incident(
+            f"{self.current_target.name}-{summary[:40]}"
+        )
+        self.limits.record_incident_start()
         self.notebook.append_to_incident(
             self.current_incident,
+            f"- 目标: {self.current_target.name} ({self.current_target.mode})\n"
             f"- {datetime.now().strftime('%H:%M')} 发现异常：{summary}\n"
             f"- 严重度：{severity}/10\n"
             f"- 原始评估：{assessment.get('details', '')}\n",
@@ -390,6 +523,24 @@ class OpsAgent:
             self.mode = self.PATROL
             return
 
+        # ── 限制检查(硬性数值约束)──
+        action_type = self._classify_action(action_plan.action)
+        target_service = self._extract_service_name(action_plan.action)
+        allowed, reason = self.limits.check_action(action_type, target_service)
+        if not allowed:
+            self.chat.say(f"⛔ 限制引擎拒绝执行: {reason}", "critical")
+            self.notebook.append_to_incident(
+                self.current_incident,
+                f"\n## 限制拒绝\n{reason}\n升级给人类。\n",
+            )
+            self.chat.escalate(
+                "动作被限制引擎拒绝,需要人类决策",
+                f"原因: {reason}\n动作: {action_plan.action}",
+            )
+            self._close_incident(f"被限制引擎拒绝: {reason}")
+            self.mode = self.PATROL
+            return
+
         if decision == ASK:
             approved = self.chat.request_approval(action_plan.to_markdown())
             if not approved:
@@ -404,6 +555,9 @@ class OpsAgent:
         # ── 执行 ──
         before_state = self._quick_observe()
         exec_result = self._execute(action_plan)
+
+        # 记录到限制引擎
+        self.limits.record_action(action_type, target_service)
 
         self.notebook.append_to_incident(
             self.current_incident,
@@ -422,6 +576,8 @@ class OpsAgent:
         else:
             self.chat.say("验证未通过，尝试回滚...", "warning")
             self.notebook.append_to_incident(self.current_incident, "\n## 验证未通过\n")
+            # 触发失败冷却期
+            self.limits.record_failure()
             # 简单回滚：通知人类
             self.chat.escalate(
                 "修复未达预期效果",
@@ -600,6 +756,36 @@ class OpsAgent:
         if self.current_incident:
             self.notebook.close_incident(self.current_incident, summary)
             self.current_incident = None
+            self.limits.record_incident_end()
+
+    def _classify_action(self, action_text: str) -> str:
+        """从动作文本中识别动作类型(给限制引擎用)"""
+        text = action_text.lower()
+        if "restart" in text or "rollout restart" in text or "重启" in text:
+            return "restart"
+        if "edit" in text or "sed" in text or "改" in text:
+            return "edit"
+        if "git apply" in text or "git push" in text or "patch" in text:
+            return "code"
+        if "kill" in text:
+            return "kill"
+        return "other"
+
+    def _extract_service_name(self, action_text: str) -> str:
+        """从动作文本中提取服务名(给单服务限制用)"""
+        # 匹配 systemctl restart <name>
+        m = re.search(r"systemctl\s+(?:restart|reload|stop|start)\s+(\S+)", action_text)
+        if m:
+            return m.group(1).strip("'\"")
+        # 匹配 docker restart <name>
+        m = re.search(r"docker\s+(?:restart|stop|start|kill)\s+(\S+)", action_text)
+        if m:
+            return m.group(1).strip("'\"")
+        # 匹配 kubectl rollout restart deployment/<name>
+        m = re.search(r"kubectl\s+rollout\s+restart\s+\S+/(\S+)", action_text)
+        if m:
+            return m.group(1).strip("'\"")
+        return ""
 
     # ═══════════════════════════════════════════
     #  人类消息处理
@@ -651,6 +837,55 @@ class OpsAgent:
         if lower == "readonly off":
             self.readonly = False
             self.chat.say("已切换到正常模式。", "info")
+            return
+
+        # ═══ 多目标管理指令 ═══
+
+        if lower in ("targets", "list targets", "lt"):
+            lines = ["当前管理的目标:"]
+            for t in self.targets:
+                marker = " ← 当前" if t.name == self.current_target.name else ""
+                lines.append(f"   • {t.name} ({t.mode}, {t.description or '-'}){marker}")
+            self.chat.say("\n".join(lines))
+            return
+
+        if lower.startswith("switch "):
+            name = msg[7:].strip()
+            if self._switch_target(name):
+                self.chat.say(f"已切换到目标 {name}。", "success")
+                # 重置目标轮询索引,让下次 round-robin 从这里开始
+                for i, t in enumerate(self.targets):
+                    if t.name == name:
+                        self._target_index = i
+                        break
+            else:
+                names = ", ".join(t.name for t in self.targets)
+                self.chat.say(f"未知目标 '{name}'。可用目标: {names}", "warning")
+            return
+
+        # ═══ 限制和安全指令 ═══
+
+        if lower == "limits":
+            s = self.limits.status()
+            lines = ["当前限制状态:"]
+            lines.append(f"   动作配额: 本小时 {s['actions_last_hour']}/{s['max_actions_per_hour']}, 今日 {s['actions_last_day']}")
+            lines.append(f"   并发 Incident: {s['active_incidents']}/{s['max_concurrent']}")
+            lines.append(f"   Token(本小时): {s['tokens_last_hour']}/{s['tokens_per_hour_budget']}")
+            if s['in_cooldown']:
+                lines.append(f"   ⚠️ 失败冷却中,还需 {s['cooldown_remaining']} 秒")
+            self.chat.say("\n".join(lines))
+            return
+
+        if lower == "freeze":
+            self.emergency.trigger("人类手动触发")
+            self.readonly = True
+            self.chat.say("🚨 已紧急冻结。所有 L2+ 操作被禁止。输入 unfreeze 解除。", "critical")
+            return
+
+        if lower == "unfreeze":
+            self.emergency.clear()
+            self.readonly = False
+            self.chat.say("已解除紧急冻结,恢复正常操作。", "success")
             return
 
         # ═══ Notebook 浏览指令 ═══
@@ -764,13 +999,19 @@ class OpsAgent:
             "   resume        恢复自主巡检\n"
             "   stop          中止当前调查回到巡检\n"
             "   readonly on/off  切换只读模式\n"
+            "   freeze        紧急冻结(禁止所有 L2+ 操作)\n"
+            "   unfreeze      解除紧急冻结\n"
             "   quit          让我下班\n"
+            "   ─── 多目标 ───\n"
+            "   targets (lt)          列出所有管理的目标\n"
+            "   switch <目标名>        切换当前激活的目标\n"
+            "   limits                查看限制配额状态\n"
             "   ─── 查看 ───\n"
             "   list playbook (lp)    列出所有 Playbook\n"
             "   list incidents (li)   列出 Incident\n"
             "   show <文件名>          查看某个 Notebook 文件\n"
             "   ─── 自由对话 ───\n"
-            "   直接打字提问或派发任务，我会自己想办法。",
+            "   直接打字提问或派发任务,我会自己想办法。",
         )
 
     def _find_and_read(self, name: str) -> str:
@@ -797,16 +1038,30 @@ class OpsAgent:
         active_incidents = self.notebook.list_dir("incidents/active")
         archived = self.notebook.list_dir("incidents/archive")
         playbooks = self.notebook.list_dir("playbook")
+        s = self.limits.status()
+
+        target_list = ", ".join(t.name for t in self.targets)
+
+        cooldown_line = ""
+        if s['in_cooldown']:
+            cooldown_line = f"\n   ⚠️ 失败冷却中,还需 {s['cooldown_remaining']} 秒"
+        frozen_line = ""
+        if self.emergency.frozen:
+            frozen_line = "\n   🚨 紧急冻结已激活"
 
         self.chat.say(
-            f"当前状态：\n"
-            f"   模式：{self.mode}\n"
-            f"   暂停：{'是' if self.paused else '否'}\n"
-            f"   只读：{'是' if self.readonly else '否'}\n"
-            f"   活跃 Incident：{len(active_incidents)} 个\n"
-            f"   历史 Incident：{len(archived)} 个\n"
-            f"   Playbook：{len(playbooks)} 个\n"
-            f"   当前问题：{self.current_issue or '无'}",
+            f"当前状态:\n"
+            f"   模式: {self.mode}\n"
+            f"   当前目标: {self.current_target.name} ({self.current_target.mode})\n"
+            f"   全部目标: {target_list}\n"
+            f"   暂停: {'是' if self.paused else '否'}\n"
+            f"   只读: {'是' if self.readonly else '否'}\n"
+            f"   活跃 Incident: {len(active_incidents)} 个\n"
+            f"   历史 Incident: {len(archived)} 个\n"
+            f"   Playbook: {len(playbooks)} 个\n"
+            f"   动作配额(本小时): {s['actions_last_hour']}/{s['max_actions_per_hour']}\n"
+            f"   当前问题: {self.current_issue or '无'}"
+            f"{cooldown_line}{frozen_line}",
             "info",
         )
 
@@ -980,11 +1235,14 @@ class OpsAgent:
 def main():
     parser = argparse.ArgumentParser(description="OpsAgent — 数字运维员工")
     parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
-    parser.add_argument("--target", default="", help="目标系统（SSH: user@host）")
+    parser.add_argument("--targets", default="",
+                        help="targets.yaml 路径(多目标模式,推荐)")
+    parser.add_argument("--target", default="",
+                        help="单目标模式(SSH: user@host)。--targets 优先")
     parser.add_argument("--port", type=int, default=22, help="SSH 端口")
     parser.add_argument("--key", default="", help="SSH 密钥路径")
     parser.add_argument("--password", action="store_true",
-                        help="使用密码认证（将交互式提示输入，需要 sshpass）")
+                        help="使用密码认证(将交互式提示输入,需要 sshpass)")
     parser.add_argument("--readonly", action="store_true", help="只读模式")
     parser.add_argument("--debug", action="store_true", help="调试模式")
     args = parser.parse_args()
@@ -992,25 +1250,45 @@ def main():
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # 配置目标
-    if args.target:
+    # ── 加载目标 ──
+    targets = []
+    fallback = None
+
+    # 优先尝试 --targets yaml 文件
+    targets_file = args.targets
+    if not targets_file:
+        # 尝试默认路径 notebook/config/targets.yaml
+        default_path = Path(args.notebook) / "config" / "targets.yaml"
+        if default_path.exists():
+            targets_file = str(default_path)
+
+    if targets_file:
+        from targets import load_targets
+        loaded = load_targets(targets_file)
+        targets = [TargetConfig.from_target(t) for t in loaded]
+        if targets:
+            print(f"✓ 已从 {targets_file} 加载 {len(targets)} 个目标")
+
+    # 单目标兼容模式
+    if not targets and args.target:
         password = ""
         if args.password:
             import getpass
             password = getpass.getpass(f"SSH password for {args.target}: ")
         elif os.getenv("OPS_SSH_PASSWORD"):
-            # 也支持通过环境变量传入密码（方便 Docker 部署）
             password = os.getenv("OPS_SSH_PASSWORD", "")
+        fallback = TargetConfig.ssh(args.target, args.port, args.key, password)
 
-        target = TargetConfig.ssh(args.target, args.port, args.key, password)
-    else:
-        target = TargetConfig.local()
+    if not targets and not fallback:
+        fallback = TargetConfig.local()
+        print("ℹ️  未指定目标,使用本机模式。如需多目标请创建 notebook/config/targets.yaml")
 
     # 启动 Agent
     agent = OpsAgent(
         notebook_path=args.notebook,
-        target=target,
+        targets=targets,
         readonly=args.readonly,
+        fallback_target=fallback,
     )
 
     # 优雅退出

@@ -4,6 +4,9 @@
 
 它不是监控系统，不是日志管道，是一个**会用 Shell、会记笔记、会跟你商量的数字同事**。
 
+**当前版本: Sprint 1**:支持多目标(SSH / Docker / K8s)、爆炸半径限制、紧急停止开关。
+查看 [examples/docker-compose-demo](examples/docker-compose-demo/) 了解快速演示。
+
 ## 工作原理
 
 ```

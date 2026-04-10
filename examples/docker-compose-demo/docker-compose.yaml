@@ -1,0 +1,48 @@
+version: '3.8'
+
+# ═══════════════════════════════════════════════════════════════
+# OpsAgent Demo Project
+# ═══════════════════════════════════════════════════════════════
+# 这是一个故意有问题的小项目,用来演示 Agent 的能力。
+#
+# 架构:
+#   nginx (80) ──→ flaky-app (5000)
+#
+# flaky-app 是一个 Flask 服务,内置三种"故障开关":
+#   - GET /healthy        - 正常返回
+#   - GET /leak           - 触发内存泄漏(每次请求泄漏 10MB)
+#   - GET /crash          - 让进程立即崩溃
+#   - GET /slow           - 模拟慢响应(10 秒)
+#
+# 使用方法:
+#   docker compose up -d
+#   curl http://localhost/healthy   # 正常
+#   curl http://localhost/leak      # 触发问题
+#
+#   然后启动 OpsAgent,看它怎么处理。
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  flaky-app:
+    build: ./flaky-app
+    container_name: flaky-app
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: demo-nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - flaky-app

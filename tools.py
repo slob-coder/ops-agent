@@ -49,21 +49,80 @@ class CommandResult:
 
 @dataclass
 class TargetConfig:
-    """目标系统连接配置"""
-    mode: str = "local"          # local | ssh
-    host: str = ""               # SSH: user@host
-    port: int = 22               # SSH port
-    key_file: str = ""           # SSH key path
-    password: str = ""           # SSH password (需要 sshpass)
-    kubectl_context: str = ""    # K8s context (optional)
+    """目标系统连接配置
+
+    支持四种模式:
+    - local: 本地工作站
+    - ssh: 远程 Linux 服务器
+    - docker: Docker 主机(本地或远程),命令通过 docker exec 进入容器
+    - k8s: K8s 集群,命令通过 kubectl exec 进入 pod
+    """
+    mode: str = "local"          # local | ssh | docker | k8s
+    name: str = "default"        # 目标的友好名称
+    description: str = ""        # 给 LLM 看的目标描述
+
+    # SSH 字段
+    host: str = ""               # user@host
+    port: int = 22
+    key_file: str = ""
+    password: str = ""           # 密码(从环境变量读)
+
+    # Docker 字段
+    docker_host: str = ""        # 留空 = 本地 unix socket
+    compose_file: str = ""       # docker-compose.yaml 路径
+    default_container: str = ""  # 默认容器名,docker exec 进入它
+
+    # K8s 字段
+    kubeconfig: str = ""         # kubeconfig 路径
+    kubectl_context: str = ""    # K8s context
+    namespace: str = "default"
+    default_pod: str = ""        # 默认 pod 名
+
+    # 源码地图(供 bug 修复用)
+    source_repos: list = field(default_factory=list)
 
     @classmethod
     def local(cls):
-        return cls(mode="local")
+        return cls(mode="local", name="local")
 
     @classmethod
     def ssh(cls, host: str, port: int = 22, key_file: str = "", password: str = ""):
-        return cls(mode="ssh", host=host, port=port, key_file=key_file, password=password)
+        return cls(mode="ssh", name=host, host=host, port=port,
+                   key_file=key_file, password=password)
+
+    @classmethod
+    def docker(cls, name: str = "docker", compose_file: str = "", docker_host: str = ""):
+        return cls(mode="docker", name=name, docker_host=docker_host,
+                   compose_file=compose_file)
+
+    @classmethod
+    def k8s(cls, name: str = "k8s", kubeconfig: str = "", context: str = "",
+            namespace: str = "default"):
+        return cls(mode="k8s", name=name, kubeconfig=kubeconfig,
+                   kubectl_context=context, namespace=namespace)
+
+    @classmethod
+    def from_target(cls, target) -> "TargetConfig":
+        """从 targets.py 的 Target 对象构造 TargetConfig"""
+        password = ""
+        if hasattr(target, "password_env") and target.password_env:
+            password = os.environ.get(target.password_env, "")
+
+        return cls(
+            mode=target.type,
+            name=target.name,
+            description=target.description,
+            host=getattr(target, "host", ""),
+            port=getattr(target, "port", 22),
+            key_file=os.path.expanduser(getattr(target, "key_file", "") or ""),
+            password=password,
+            docker_host=getattr(target, "docker_host", ""),
+            compose_file=getattr(target, "compose_file", ""),
+            kubeconfig=os.path.expanduser(getattr(target, "kubeconfig", "") or ""),
+            kubectl_context=getattr(target, "context", ""),
+            namespace=getattr(target, "namespace", "default"),
+            source_repos=getattr(target, "source_repos", []) or [],
+        )
 
 
 class ToolBox:
@@ -134,6 +193,16 @@ class ToolBox:
             logger.info("SSH master connection closed")
         except Exception:
             pass
+
+    def _build_env_for_mode(self) -> dict:
+        """根据 target 类型构造执行命令时的环境变量"""
+        env = dict(os.environ)
+        if self.target.mode == "docker" and self.target.docker_host:
+            env["DOCKER_HOST"] = self.target.docker_host
+        elif self.target.mode == "k8s":
+            if self.target.kubeconfig:
+                env["KUBECONFIG"] = self.target.kubeconfig
+        return env
 
     def _build_ssh_options(self) -> list[str]:
         """构造 ssh 公共选项，包含 ControlMaster 和保活配置"""
@@ -256,7 +325,16 @@ class ToolBox:
                         ssh_cmd, timeout=timeout,
                         interrupt_check=interrupt_check,
                     )
+            elif self.target.mode in ("docker", "k8s"):
+                # Docker / K8s 模式:命令在工作站本地执行
+                # LLM 生成的命令应该已经包含 docker / kubectl 前缀,直接跑
+                env = self._build_env_for_mode()
+                result = self._popen_with_interrupt(
+                    cmd, timeout=timeout, shell=True, env=env,
+                    interrupt_check=interrupt_check,
+                )
             else:
+                # local 模式
                 result = self._popen_with_interrupt(
                     cmd, timeout=timeout, shell=True,
                     interrupt_check=interrupt_check,
