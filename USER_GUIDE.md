@@ -1,877 +1,969 @@
-# OpsAgent 使用手册
+# OpsAgent 使用指南
 
-> 一个实时在岗、会成长、在人类监督下工作的数字运维员工
+> 版本: v1.0  ·  适用范围: 5 个 Sprint 全部完成后的 OpsAgent
+>
+> 本指南覆盖从首次部署到生产运维的全流程.如果你只想快速跑起来,看 [README.md](./README.md) 的"快速开始"即可.
 
 ---
 
 ## 目录
 
-1. [它是什么](#1-它是什么)
-2. [安装](#2-安装)
-3. [配置 LLM](#3-配置-llm)
-4. [配置目标系统](#4-配置目标系统)
-5. [启动 Agent](#5-启动-agent)
-6. [和 Agent 对话](#6-和-agent-对话)
-7. [理解 Agent 的行为](#7-理解-agent-的行为)
-8. [Notebook 笔记本](#8-notebook-笔记本)
-9. [扩展 Agent 能力](#9-扩展-agent-能力)
-10. [授权与安全](#10-授权与安全)
-11. [常见问题排查](#11-常见问题排查)
-12. [常用场景示例](#12-常用场景示例)
-13. [环境变量参考](#13-环境变量参考)
-14. [命令行参数参考](#14-命令行参数参考)
+1. [安装与依赖](#1-安装与依赖)
+2. [配置](#2-配置)
+   - 2.1 [LLM 配置](#21-llm-配置)
+   - 2.2 [目标配置 targets.yaml](#22-目标配置-targetsyaml)
+   - 2.3 [源码仓库 SourceRepo](#23-源码仓库-sourcerepo)
+   - 2.4 [授权规则 permissions.md](#24-授权规则-permissionsmd)
+   - 2.5 [爆炸半径 limits.yaml](#25-爆炸半径-limitsyaml)
+   - 2.6 [IM 通知 notifier.yaml](#26-im-通知-notifieryaml)
+3. [启动与部署](#3-启动与部署)
+   - 3.1 [本地 / Docker / systemd](#31-本地--docker--systemd)
+   - 3.2 [崩溃恢复](#32-崩溃恢复)
+   - 3.3 [Watchdog 集成](#33-watchdog-集成)
+4. [与 Agent 对话](#4-与-agent-对话)
+5. [自主修复闭环](#5-自主修复闭环)
+   - 5.1 [代码 bug 自动修复全流程](#51-代码-bug-自动修复全流程)
+   - 5.2 [部署信号配置](#52-部署信号配置)
+   - 5.3 [生产观察期与自动 revert](#53-生产观察期与自动-revert)
+6. [可观测性](#6-可观测性)
+   - 6.1 [健康检查与 Metrics](#61-健康检查与-metrics)
+   - 6.2 [审计日志](#62-审计日志)
+   - 6.3 [IM 通知与日报](#63-im-通知与日报)
+7. [安全与紧急停止](#7-安全与紧急停止)
+8. [扩展](#8-扩展)
+   - 8.1 [新增 Playbook](#81-新增-playbook)
+   - 8.2 [新增 Git Host / Notifier 通道](#82-新增-git-host--notifier-通道)
+9. [故障排查](#9-故障排查)
+10. [运维实践](#10-运维实践)
 
 ---
 
-## 1. 它是什么
+## 1. 安装与依赖
 
-OpsAgent 不是监控系统，不是日志聚合平台，也不是告警工具。
+**系统要求:**
+- Python ≥ 3.10
+- git ≥ 2.20(本地仓库 + 补丁应用)
+- 可选:`gh` CLI(GitHub PR 工作流)/ `glab` CLI(GitLab)
+- 可选:`docker` / `kubectl`(对应目标类型)
 
-**它是一个数字员工**——一个 7×24 在线、会用 Shell、会记笔记、会跟你商量事情的运维工程师。
-
-它的工作方式和人类运维一样：
-- 用终端命令观察系统（`tail`、`systemctl`、`dmesg`...）
-- 看到异常就思考是什么原因
-- 根据经验决定怎么修
-- 改完之后验证效果
-- 把这次经历写进笔记本，下次遇到类似问题就更熟练
-
-它部署在**业务系统之外**——通常是你的运维工作站或堡垒机——通过 SSH/kubectl 远程操作目标。**对业务零侵入，不需要在被监控的机器上装任何东西**。
-
----
-
-## 2. 安装
-
-### 2.1 环境要求
-
-- Python 3.10+
-- Git
-- 可选：`sshpass`（仅在使用 SSH 密码认证时需要）
-- 可选：Docker（如果用容器方式部署）
-
-### 2.2 源码安装
-
-```bash
-# 解压发布包
-tar -xzf ops-agent.tar.gz
-cd ops-agent
-
-# 安装 Python 依赖
-pip install -r requirements.txt
-```
-
-`requirements.txt` 只包含两个 LLM SDK：
+**Python 依赖**(`requirements.txt`):
 
 ```
 anthropic>=0.40.0
 openai>=1.50.0
+prompt_toolkit>=3.0.0
+pyyaml>=6.0
 ```
 
-如果你只用其中一个，可以只装一个。
-
-### 2.3 安装 sshpass（可选）
-
-只有当你需要用密码登录远程服务器时才需要：
+只有这 4 个第三方包,其余 Sprint 2-6 全部用 stdlib(stack 解析、git 操作、HTTP 健康检查、IM 通知、Prometheus metrics 都是手写零依赖).
 
 ```bash
-# macOS
-brew install hudochenkov/sshpass/sshpass
-
-# Ubuntu / Debian
-sudo apt install sshpass
-
-# CentOS / RHEL
-sudo yum install sshpass
-```
-
-如果使用 SSH 密钥认证（推荐），不需要安装 sshpass。
-
-### 2.4 Docker 安装
-
-```bash
-docker build -t ops-agent .
+git clone <repo-url> && cd ops-agent
+pip install -r requirements.txt
 ```
 
 ---
 
-## 3. 配置 LLM
+## 2. 配置
 
-OpsAgent 支持三种 LLM 提供商。通过环境变量切换：
+OpsAgent 的所有配置都集中在 `notebook/config/` 目录下.除了 LLM 凭据走环境变量,其他都是 yaml/markdown,git 可追踪.
 
-### 3.1 Anthropic Claude（默认）
+### 2.1 LLM 配置
+
+通过环境变量配置.支持三种 provider:
 
 ```bash
+# Anthropic Claude(默认,推荐)
 export OPS_LLM_PROVIDER=anthropic
-export OPS_LLM_API_KEY='sk-ant-xxxxxxxxxxxx'
-# 可选：指定模型，默认 claude-sonnet-4-20250514
-export OPS_LLM_MODEL=claude-sonnet-4-20250514
-```
+export OPS_LLM_API_KEY="sk-ant-..."
+export OPS_LLM_MODEL=claude-sonnet-4-20250514     # 可选,有默认
 
-支持的模型示例：
-- `claude-opus-4-5` — 最强模型
-- `claude-sonnet-4-20250514` — 平衡型（推荐）
-- `claude-haiku-4-5-20251001` — 速度优先
-
-### 3.2 OpenAI
-
-```bash
+# OpenAI
 export OPS_LLM_PROVIDER=openai
-export OPS_LLM_API_KEY='sk-xxxxxxxxxxxx'
-export OPS_LLM_MODEL=gpt-4o   # 默认
-```
+export OPS_LLM_API_KEY="sk-..."
+export OPS_LLM_MODEL=gpt-4o
 
-如果使用 OpenAI 兼容的代理或本地模型（如 Ollama）：
-
-```bash
-export OPS_LLM_PROVIDER=openai
-export OPS_LLM_BASE_URL='http://localhost:11434/v1'
-export OPS_LLM_MODEL=llama3
-export OPS_LLM_API_KEY=dummy   # 本地模型也要随便填一个
-```
-
-### 3.3 智谱 GLM
-
-```bash
+# 智谱 GLM
 export OPS_LLM_PROVIDER=zhipu
-export OPS_LLM_API_KEY='你的智谱API Key'
-# 可选：默认 glm-4-plus
+export OPS_LLM_API_KEY="..."
 export OPS_LLM_MODEL=glm-4-plus
+
+# 任何 OpenAI-API 兼容的本地模型(Ollama / vLLM / LM Studio)
+export OPS_LLM_PROVIDER=openai
+export OPS_LLM_BASE_URL=http://localhost:11434/v1
+export OPS_LLM_MODEL=llama3
+export OPS_LLM_API_KEY=dummy
 ```
 
-支持的模型：
-- `glm-4-plus` — 最强（默认）
-- `glm-4` — 平衡
-- `glm-4-air` — 性价比
-- `glm-4-flash` — 速度优先
-- `glm-4-long` — 长上下文
+**LLM 失败处理**:
+所有 LLM 调用默认包了一层 `RetryingLLM`,在 API 抖动时自动重试 3 次(指数退避 1s/2s/4s).连续失败 → 抛 `LLMDegraded` → Agent 自动切到 readonly + escalate 人类 + 每 5 分钟重试一次.恢复后自动切回正常.
 
----
+### 2.2 目标配置 targets.yaml
 
-## 4. 配置目标系统
+`notebook/config/targets.yaml` 定义 Agent 管理的所有目标系统.
 
-OpsAgent 可以监控本机、也可以远程监控其他机器。
+```yaml
+targets:
+  # ── 本地 ──
+  - name: local-dev
+    type: local
+    description: 开发机本地巡检
+    criticality: low
+    tags: [dev]
 
-### 4.1 监控本机
+  # ── SSH 远程 ──
+  - name: web-prod-01
+    type: ssh
+    host: ops@web01.example.com
+    port: 22
+    key_file: ~/.ssh/id_ed25519
+    description: 生产环境 web 节点
+    criticality: critical
+    tags: [prod, web, frontend]
 
-什么都不用配，直接启动即可：
+  # ── Docker 主机 ──
+  - name: dockerhost-staging
+    type: docker
+    docker_host: ""               # 空 = 本地 unix socket
+    compose_file: /opt/staging/docker-compose.yml
+    description: 测试环境 docker compose
+    criticality: normal
+    tags: [staging]
 
-```bash
-python main.py
+  # ── Kubernetes 集群 ──
+  - name: k8s-prod
+    type: k8s
+    kubeconfig: ~/.kube/config
+    context: prod-cluster
+    namespace: backend
+    criticality: critical
+    tags: [prod, k8s]
 ```
 
-### 4.2 远程监控（SSH 密钥）
+每个 target 有独立的 `ToolBox`(命令执行器)但共享同一个 `Notebook` 和 `LLM`.
 
-**推荐方式**，最安全：
+**`criticality`** 字段在 prompt 中告知 LLM 当前目标的重要性,影响 Agent 的谨慎程度.
 
-```bash
-# 先确保你能用密钥登录目标机器
-ssh -i ~/.ssh/id_rsa user@192.168.1.100
+**`tags`** 字段供 playbook 检索时过滤(例如某 playbook 只对 `[prod]` 标签的目标生效).
 
-# 然后启动 Agent
-python main.py --target user@192.168.1.100 --key ~/.ssh/id_rsa
+### 2.3 源码仓库 SourceRepo
+
+如果你要启用源码 bug 自动修复(Sprint 2-4 的能力),在每个 target 下添加 `source_repos`:
+
+```yaml
+targets:
+  - name: web-prod-01
+    type: ssh
+    host: ops@web01.example.com
+    source_repos:
+      - name: backend
+        path: /opt/sources/backend            # Agent 工作站上的本地 clone
+        repo_url: git@github.com:org/backend.git
+        branch: main
+        language: python                       # python / java / go / node / rust / cpp
+        build_cmd: "python -m py_compile $(git ls-files '*.py')"
+        test_cmd: "pytest -x --timeout=30"
+
+        # 运行时实体到本地 clone 的路径前缀映射
+        # 容器里是 /app/handlers/user.py,本地是 /opt/sources/backend/handlers/user.py
+        path_prefix_runtime: /app
+        path_prefix_local: ""
+
+        # ── Sprint 4: PR 工作流 ──
+        git_host: github                       # github | gitlab | noop
+        base_branch: main
+        deploy_signal:
+          type: http
+          url: http://web01.example.com/version
+          expect_contains: "{commit_sha}"
+          check_interval: 10
+          timeout: 1800
+
+        # 用于复发检测的日志路径(可选)
+        log_path: /var/log/backend/error.log
 ```
 
-### 4.3 远程监控（SSH 密码）
+**字段说明:**
 
-需要先安装 `sshpass`，然后有三种方式提供密码：
-
-**方式 A：环境变量（推荐）**
-
-```bash
-export OPS_SSH_PASSWORD='你的密码'
-python main.py --target user@192.168.1.100 --password
-```
-
-**方式 B：交互输入**
-
-不设环境变量，加 `--password` 参数后，启动时会提示输入密码：
-
-```bash
-python main.py --target user@192.168.1.100 --password
-# SSH password for user@192.168.1.100: ****
-```
-
-**方式 C：默认密钥（推荐 SSH 密钥代替密码）**
-
-如果可以用密钥就用密钥。
-
-### 4.4 自定义 SSH 端口
-
-```bash
-python main.py --target user@192.168.1.100 --port 2222 --key ~/.ssh/id_rsa
-```
-
----
-
-## 5. 启动 Agent
-
-### 5.1 最简单的启动
-
-```bash
-export OPS_LLM_API_KEY='你的 API Key'
-python main.py
-```
-
-第一次启动时，Agent 会自动**入职探索**——它会跑一系列命令认识这台机器，然后生成 `notebook/system-map.md` 和 `notebook/config/watchlist.md`。
-
-之后会进入巡检循环。
-
-### 5.2 只读模式（推荐第一次使用）
-
-第一次部署到生产环境时，强烈建议先用只读模式跑几天：
-
-```bash
-python main.py --readonly
-```
-
-只读模式下：
-- Agent 仍然会观察、判断、诊断、记录 Incident
-- 但**不会执行任何修改操作**（重启、改配置、提 PR 都不会做）
-- 你可以观察 Agent 的判断是否靠谱，再决定是否放权
-
-### 5.3 调试模式
-
-启动时加 `--debug` 可以看到详细的 LLM 调用日志：
-
-```bash
-python main.py --debug
-```
-
-### 5.4 Docker 启动
-
-```bash
-# 监控本机
-docker run -it \
-  -e OPS_LLM_API_KEY='你的 Key' \
-  -v $(pwd)/notebook:/data/notebook \
-  ops-agent
-
-# 监控远程
-docker run -it \
-  -e OPS_LLM_API_KEY='你的 Key' \
-  -v $(pwd)/notebook:/data/notebook \
-  -v ~/.ssh:/root/.ssh:ro \
-  ops-agent --target user@192.168.1.100 --key /root/.ssh/id_rsa
-```
-
-注意 `-v $(pwd)/notebook:/data/notebook` 把笔记本挂载到宿主机，这样容器重启后 Agent 的记忆不会丢。
-
----
-
-## 6. 和 Agent 对话
-
-启动后终端是交互式的——你可以**随时输入消息和 Agent 对话**。
-
-### 6.1 内置命令
-
-| 命令 | 作用 |
-|---|---|
-| `status` | 查看 Agent 当前状态 |
-| `readonly on` | 切换到只读模式 |
-| `readonly off` | 退出只读模式 |
-| `stop` | 停止当前调查，回到巡检 |
-| `quit` / `exit` / `bye` | 退出 Agent |
-
-### 6.2 自然语言对话
-
-直接用自然语言问任何问题：
-
-```
-> 最近有没有 OOM 事件？
-[14:32:15] 💬 我查一下...让我看看 dmesg 和 journal。
-[14:32:20] 💬 过去 24 小时没有发现 OOM 事件。最近一次 OOM 是在
-            2026-04-03 14:23，被杀的是 backend 进程。详见
-            incidents/archive/2026-04-03-1423-oom-backend.md。
-
-> nginx 的连接数现在多少？
-[14:33:02] 💬 当前 nginx 共有 142 个活跃连接（其中 118 个 ESTABLISHED）。
-            状态正常，最近 10 分钟内没有异常波动。
-
-> 帮我把 nginx 重启一下
-[14:34:10] ⚠️  我打算执行以下操作：
-              动作：systemctl restart nginx
-              理由：用户请求
-              回滚：如果重启失败，systemctl start nginx
-            请输入 'y' 批准 / 'n' 否决：
-> y
-[14:34:25] ✅ nginx 重启成功，验证通过。已记录到 conversations/。
-```
-
-### 6.3 Agent 主动通知你
-
-Agent 会在以下时机主动找你说话：
-
-- 发现异常时
-- 即将执行重要操作前（请求批准）
-- 操作执行成功/失败后
-- 遇到自己搞不定的问题（升级给人类）
-
-```
-[14:23:05] ⚠️  发现异常（严重度 8/10）：nginx error.log 出现大量 502
-[14:23:12] 💬 正在调查...让我检查 backend 服务状态。
-[14:23:20] 🚨 backend 服务 inactive (dead)，疑似 OOM 被杀。
-              我打算执行：systemctl restart backend
-              这是 L2 操作，按授权规则需要你批准。
-              请输入 'y' 批准 / 'n' 否决：
-```
-
----
-
-## 7. 理解 Agent 的行为
-
-### 7.1 三种工作模式
-
-| 模式 | 何时进入 | 行为 |
+| 字段 | 必填 | 说明 |
 |---|---|---|
-| **巡检 (patrol)** | 默认状态 | 每 60 秒扫一次系统，轻量观察 |
-| **调查 (investigate)** | 发现疑似异常 | 每 5 秒高频观察，深度收集信息 |
-| **应急 (incident)** | 确认问题需要处置 | 每 2 秒密集监控，执行修复 |
+| `name` | ✓ | 仓库别名,日志和 PR 标题里用到 |
+| `path` | ✓ | 本地 clone 的绝对路径(Agent 必须能读写) |
+| `language` | 推荐 | 用于 stack_parser 和 source_locator 的软过滤 |
+| `build_cmd` | 启用补丁修复必填 | 编译/语法检查命令,5 分钟超时 |
+| `test_cmd` |  | 单元测试命令,10 分钟超时.空 = 跳过测试 |
+| `path_prefix_runtime` |  | 容器内路径前缀,例如 `/app` |
+| `path_prefix_local` |  | 本地 clone 内的相对前缀(通常空) |
+| `git_host` | 启用自动 PR 必填 | `github` / `gitlab` / `noop`(只本地验证不推送) |
+| `base_branch` |  | PR 目标分支,默认 `main` |
+| `deploy_signal` |  | 见 [§5.2](#52-部署信号配置) |
 
-模式切换由 Agent 自主决定。你可以用 `status` 命令查看当前模式。
+**渐进启用建议**:
+- 阶段 1:先只配 `path` + `language`,启用 Sprint 2 的源码定位(Agent 在 incident 笔记里写出"出错代码在 user.py:42")
+- 阶段 2:加 `build_cmd` + `test_cmd`,启用 Sprint 3 的本地补丁验证(Agent 生成补丁但不 push)
+- 阶段 3:加 `git_host: github` + `deploy_signal`,启用 Sprint 4 的完整自动 PR/合并/观察/revert 流程
 
-### 7.2 一次完整事件的处理流程
+### 2.4 授权规则 permissions.md
 
-```
-1. 巡检发现异常
-   ↓
-2. 进入调查模式，创建 Incident 笔记
-   ↓
-3. 检索相关 Playbook 和历史 Incident
-   ↓
-4. 形成诊断假设（说明把握有多大）
-   ↓
-5. 把握 < 70% → 升级给人类
-   把握 ≥ 70% → 制定修复方案
-   ↓
-6. 信任度检查（依据 permissions.md）
-   ↓
-7. allow → 直接执行
-   notify → 通知后执行
-   ask    → 等你批准
-   deny   → 拒绝
-   ↓
-8. 执行修复
-   ↓
-9. 验证效果
-   ↓
-10. 复盘 → 更新 Playbook → 归档 Incident
-```
-
-### 7.3 Agent 的"成长"
-
-Agent 处理过的每一次事件都会沉淀经验：
-
-- **更新 Playbook**：在已有 Playbook 末尾追加历史记录
-- **创建新 Playbook**：从全新场景中提炼操作手册
-- **写 Lesson**：从多个相似事件中蒸馏教训
-- **修正 system-map**：发现新服务/新依赖时更新拓扑
-
-你可以打开 `notebook/playbook/` 查看 Agent 学到了什么。
-
----
-
-## 8. Notebook 笔记本
-
-Notebook 是 Agent 的"大脑"——一个 git 仓库，里面全是 markdown。
-
-### 8.1 目录结构
-
-```
-notebook/
-├── README.md              ← Agent 的自我介绍 + 当前状态
-├── system-map.md          ← Agent 画的系统拓扑
-├── config/
-│   ├── permissions.md     ← 授权规则（你可以改）
-│   ├── watchlist.md       ← 观察源配置（你可以改）
-│   └── contacts.md        ← 联络人信息（你应该填）
-├── playbook/              ← 操作手册（Agent 和你都可以写）
-│   ├── nginx-502.md
-│   ├── oom-killer.md
-│   └── disk-full.md
-├── incidents/
-│   ├── active/            ← 正在处理的事件
-│   └── archive/           ← 已关闭的事件
-├── lessons/               ← 蒸馏出来的经验教训
-├── conversations/         ← 和你的对话历史
-└── questions/             ← Agent 想问但还没答案的问题
-```
-
-### 8.2 人类可以直接编辑
-
-**Notebook 是人和 Agent 共用的笔记。** 你可以：
-
-- 用 IDE 直接打开 markdown 编辑
-- Agent 在下一轮循环就会读到你的修改
-- 修改不需要重启 Agent
-
-**修改 Notebook 的常见场景**：
-
-| 场景 | 改哪个文件 |
-|---|---|
-| 我想加一个新的修复 SOP | 往 `playbook/` 加一个 `.md` 文件 |
-| 我想让 Agent 多检查某个日志 | 编辑 `config/watchlist.md` |
-| 我想收紧权限，重启服务必须批准 | 编辑 `config/permissions.md` |
-| 告诉 Agent 业务联系人是谁 | 编辑 `config/contacts.md` |
-| 修正 Agent 误解的系统拓扑 | 编辑 `system-map.md` |
-
-### 8.3 git 历史
-
-Notebook 是个 git 仓库，所有 Agent 的修改都有 commit message。你可以：
-
-```bash
-cd notebook
-git log --oneline       # 看 Agent 都做了什么
-git diff HEAD~5 HEAD    # 看最近 5 次改了什么
-git revert <commit>     # 回滚某次修改
-```
-
-### 8.4 跨机器同步
-
-Notebook 可以 push 到远端 git 仓库实现"经验共享"：
-
-```bash
-cd notebook
-git remote add origin git@github.com:yourcompany/ops-notebook.git
-git push -u origin main
-
-# 在另一台机器上
-git clone git@github.com:yourcompany/ops-notebook.git
-python main.py --notebook ./ops-notebook
-```
-
----
-
-## 9. 扩展 Agent 能力
-
-### 9.1 添加新 Playbook
-
-**最简单的扩展方式**——往 `notebook/playbook/` 里扔一个 markdown 文件即可，不需要重启 Agent。
-
-格式自由，建议包含四个部分：
-
-```markdown
-# MySQL 慢查询飙升
-
-## 什么时候用我
-- MySQL 慢查询日志数量突然增加
-- 应用响应延迟报警
-- mysql slow_queries 指标异常
-
-## 先查什么
-1. 当前活跃连接：`mysql -e 'SHOW PROCESSLIST'`
-2. 慢查询日志：`tail -100 /var/log/mysql/slow.log`
-3. InnoDB 状态：`mysql -e 'SHOW ENGINE INNODB STATUS\G'`
-4. 系统负载：`top -bn1 | head`
-
-## 怎么修
-- 短期：识别 long-running query 并 kill：`mysql -e 'KILL <id>'`
-- 中期：增加索引（需要走 PR 流程）
-- 长期：拆库分表（需要升级给人类）
-
-## 验证标准
-- 慢查询率回落到正常水平
-- 应用响应延迟恢复
-- 持续观察 10 分钟稳定
-
-## 历史记录
-（Agent 自动追加）
-```
-
-写完保存即可。Agent 在下次遇到匹配场景时会自动找到并使用。
-
-### 9.2 添加新观察源
-
-编辑 `notebook/config/watchlist.md`，用自然语言描述：
-
-```markdown
-## 自定义观察源
-- 每 60 秒：`tail -n 30 /opt/myapp/logs/error.log` — 关注 ERROR 级别日志
-- 每 300 秒：`curl -s http://localhost:8080/health` — 业务健康检查
-- 每 60 秒：`redis-cli INFO clients` — Redis 连接数
-```
-
-Agent 会读到这些自然语言描述，自己生成对应的命令并执行。
-
-### 9.3 修改 Agent 的行为准则
-
-`README.md` 是 Agent 的"工作准则"，每次 LLM 调用都会读到。你可以编辑它来改变 Agent 的行事风格：
-
-```markdown
-# 我是谁
-我是 prod-cluster-01 的运维员工。
-
-# 工作准则
-- 凌晨 0:00 - 6:00 是免打扰时段，非紧急情况不要叫醒人类
-- 涉及支付服务（payment-*）的任何操作都必须人类批准
-- 优先级：业务可用性 > 数据安全 > 性能 > 日志噪声
-- 每周一早上 9 点写一份周报到 lessons/weekly-report.md
-```
-
-### 9.4 适配新系统类型
-
-如果你要监控的目标是非 Linux 系统（Windows、嵌入式设备等），需要：
-
-1. 在 `tools.py` 中增加对应的命令封装方法
-2. 在 `prompts/system.md` 中补充该系统的可用命令清单
-3. 写 2-3 个示例 Playbook 让 Agent 知道怎么处理常见问题
-
----
-
-## 10. 授权与安全
-
-### 10.1 信任等级
-
-OpsAgent 的所有动作分为 5 个等级：
-
-| 等级 | 说明 | 默认行为 |
-|---|---|---|
-| **L0 只读** | tail/grep/ps/df 等观察命令 | 直接执行 |
-| **L1 写笔记** | 修改 Notebook 内容 | 直接执行 |
-| **L2 服务操作** | 重启/改配置 | 通知后执行（核心服务需批准）|
-| **L3 代码修改** | 提 PR | 必须人类批准 |
-| **L4 破坏性** | rm -rf / DROP DATABASE 等 | **永远禁止** |
-
-### 10.2 编辑 permissions.md 自定义授权
-
-`notebook/config/permissions.md` 是用**自然语言**写的授权规则。Agent 每次执行操作前都会读这个文件，让 LLM 判断当前操作是否允许。
-
-示例规则：
+`notebook/config/permissions.md` 用自然语言告诉 Agent 哪些 L2+ 操作可以自动执行,哪些必须先问人类.示例:
 
 ```markdown
 # 授权规则
 
-## 默认策略
-- 只读操作：直接执行
-- 重启非核心服务：通知人类后直接执行
-- 重启核心服务（mysql, redis, nginx）：必须人类批准
-- 修改配置文件：通知人类后执行，必须先备份原文件
-- 修改代码/提交 PR：必须人类批准
+## 自动批准(L2 自动)
+- 重启 nginx / php-fpm / redis(每天最多 3 次)
+- 清理 /tmp 和 /var/log 下超过 7 天的文件
+- 重启 docker 容器(配合 limits.yaml 的 max_restarts_per_service_per_day)
 
-## 核心服务列表
-mysql, redis, nginx, gateway, payment-service
+## 必须问人类(L2 但需确认)
+- 修改 /etc/ 下的任何配置文件(改之前必须 cp 备份)
+- 扩缩容 K8s deployment
+- 任何涉及数据库(mysql/postgres)的操作
 
-## 时间窗口
-- 工作日 9:00-18:00：可自主重启非核心服务
-- 其他时间：所有 L2 操作都要批准
-
-## 紧急情况
-如果业务完全不可用且每分钟损失 > 1万元，可不等批准直接执行 L2，
-但必须事后在 Incident 中详细记录。
+## 永远禁止(L4)
+- rm -rf /
+- DROP TABLE / TRUNCATE
+- 关机/重启服务器
+- 修改 /etc/passwd / /etc/shadow
 ```
 
-**这是真正的自然语言**——你怎么写都行，LLM 会理解。
+Agent 在 plan 阶段会读取这个文件,LLM 自己判断当前 action 落在哪一档.黑名单(L4)由 `safety.py` 硬编码兜底,无论 LLM 怎么说都拦截.
 
-### 10.3 黑名单（永远不能改）
+### 2.5 爆炸半径 limits.yaml
 
-以下命令在代码里硬编码为黑名单，Agent **永远不会执行**，即使你在 permissions.md 里允许也不行：
+`notebook/config/limits.yaml` 是物理护栏,LLM 无法绕过:
 
-- `rm -rf /` 和 `rm -rf /*`
-- `mkfs` / `mke2fs` 等格式化命令
-- `dd if=... of=/dev/sd...` 等写磁盘设备
-- `DROP DATABASE` / `DROP TABLE` / `TRUNCATE TABLE`
-- `shutdown` / `reboot` / `poweroff` / `halt`
-- Fork 炸弹
-- `format c:` 等 Windows 格式化
-- `chmod -R / `/`chown -R /`
+```yaml
+enabled: true
 
-注意：合法的运维操作不会被误伤，例如 `rm -rf /tmp/cache`、`docker ps --format`、`iptables -j DROP` 都能正常执行。
+# 动作频率
+max_actions_per_hour: 20
+max_actions_per_day: 100
 
-### 10.4 紧急停手
+# 单服务限制
+max_restarts_per_service_per_day: 5
+max_restarts_per_service_per_hour: 3
 
-如果发现 Agent 行为异常，立即在终端输入：
+# 并发上限
+max_concurrent_incidents: 2
+
+# 失败冷却(修复失败后多久内禁止再尝试)
+cooldown_after_failure_seconds: 600
+
+# LLM 成本
+llm_tokens_per_day: 1000000
+llm_tokens_per_hour: 200000
+
+# Sprint 4: 自动合并 PR 上限
+max_auto_merges_per_day: 5
+```
+
+任何超限都强制升级给人类,Agent 不能用任何理由突破.
+
+### 2.6 IM 通知 notifier.yaml
+
+`notebook/config/notifier.yaml`(可参考 `notifier.yaml.example`):
+
+```yaml
+type: slack                # slack | dingtalk | feishu | none
+webhook_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+
+notify_on:
+  - incident_opened
+  - incident_closed
+  - pr_merged
+  - revert_triggered
+  - critical_failure
+  - llm_degraded
+  - daily_report
+
+quiet_hours:
+  start: "22:00"
+  end: "08:00"
+  except_urgency:
+    - critical
+```
+
+**安全实践**:`webhook_url` 推荐通过环境变量覆盖,避免凭据进 git:
+
+```bash
+export OPS_NOTIFIER_WEBHOOK_URL="https://hooks.slack.com/services/..."
+```
+
+`quiet_hours` 支持跨日(`22:00 → 08:00`)和同日(`13:00 → 14:00`)两种.`critical` 级通知不受免打扰约束.
+
+---
+
+## 3. 启动与部署
+
+### 3.1 本地 / Docker / systemd
+
+**本地直接跑**(开发或调试):
+
+```bash
+# 单目标快速启动(命令行参数)
+python main.py --target user@host --notebook ./notebook
+
+# 多目标(从 targets.yaml 读)
+python main.py --notebook ./notebook
+
+# 只读模式(只观察不动手)
+python main.py --readonly
+
+# 调试模式
+python main.py --debug
+```
+
+**Docker**:
+
+```bash
+docker build -t ops-agent .
+docker run -it \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  -e OPS_NOTIFIER_WEBHOOK_URL=https://... \
+  -v $(pwd)/notebook:/data/notebook \
+  -v ~/.ssh:/root/.ssh:ro \
+  -p 9876:9876 \
+  ops-agent
+```
+
+**systemd**(生产推荐):
+
+```bash
+# 一键安装(查看 scripts/install.sh 后再执行)
+sudo bash scripts/install.sh
+
+# 手动安装
+sudo cp ops-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ops-agent
+
+# 查看日志
+journalctl -u ops-agent -f
+
+# 重启
+sudo systemctl restart ops-agent
+```
+
+`ops-agent.service` 配置了 `Restart=always` + `StartLimitBurst=5`,5 分钟内崩溃 5 次后会停止重启等待人类介入.
+
+### 3.2 崩溃恢复
+
+OpsAgent 每次主循环结束都会把状态 checkpoint 到 `notebook/state.json`(原子写).包括:
+
+- 当前模式(patrol / investigate / incident)
+- 当前 target / incident
+- readonly / paused 标志
+- 最后一次错误文本(用于复发检测 baseline)
+- 自动合并 PR 时间戳(用于限流复位)
+
+**重启时自动恢复**.如果检测到上次有未完成的 incident,Agent 会:
+
+1. 在终端输出"⚠️ 检测到上次未完成的工作,已恢复状态"
+2. **不重放未完成的动作**(重启时被中断的动作可能已部分执行,重放可能造成损害)
+3. 让人类决定是继续还是放弃
+
+state 文件版本号不匹配 / 损坏 / 不存在 → 直接全新启动,绝不会因状态损坏而崩溃.
+
+### 3.3 Watchdog 集成
+
+Agent 启动后默认在 `127.0.0.1:9876` 暴露健康端点.外部 watchdog 可以做主动探活:
+
+```bash
+# 简单 cron 探活
+* * * * * /opt/ops-agent/scripts/watchdog.sh
+
+# scripts/watchdog.sh 内置逻辑:
+#   连续 3 次健康检查失败 → systemctl restart ops-agent
+```
+
+也可以接 K8s liveness probe:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 9876
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  failureThreshold: 3
+```
+
+---
+
+## 4. 与 Agent 对话
+
+Agent 启动后,任何时候都可以在终端输入消息.Agent 在做任何事(包括 LLM 流式生成、运行命令)的过程中都能被打断,秒级响应.
+
+### 内置命令
+
+| 命令 | 说明 |
+|---|---|
+| `status` | 查看 Agent 当前状态(模式、目标、incident、限制配额) |
+| `pause` / `resume` | 暂停/恢复自主巡检(Agent 仍响应你的指令) |
+| `stop` | 停止当前调查/incident,回到巡检 |
+| `readonly on` / `readonly off` | 切换只读模式 |
+| `target <name>` | 切换当前激活的目标(如果配了多个) |
+| `quit` / `exit` | 退出 Agent |
+
+### 自然语言对话
+
+```
+> 最近一小时 nginx 有没有 5xx 错误?
+> 帮我看一下 db-prod 的磁盘使用率
+> 这个 incident 你觉得是什么原因?
+> 不要重启 redis,我先看一下
+```
+
+Agent 把这些当成"人类的指令",会立刻执行(读日志、跑命令、回答问题),而不是当成普通对话.
+
+### 紧急停止
+
+任何时候按 `Ctrl-C` 或输入 `stop`,Agent 会立刻:
+1. 中断正在进行的 LLM 流式生成
+2. 中断正在跑的 SSH/Docker 命令
+3. 在 incident 笔记里写一行"被人类中断"
+4. 回到 patrol 模式等下一步指令
+
+---
+
+## 5. 自主修复闭环
+
+### 5.1 代码 bug 自动修复全流程
+
+完整流程(Sprint 2-4 的能力):
+
+```
+异常发生
+  │
+  ├── observe → assess → "这是异常"
+  │
+  ├── diagnose:LLM 分析 + 自动定位异常源码                    [Sprint 2]
+  │     ↳ stack_parser 解析 Python/Java/Go/Node traceback
+  │     ↳ source_locator 反向定位到本地 clone
+  │     ↳ 提取目标行 ±30 行上下文 + 函数定义
+  │     ↳ 注入到 diagnose prompt 的 {source_locations}
+  │     ↳ LLM 输出诊断结论,带 type=code_bug
+  │
+  ├── 满足触发条件(type=code_bug + 有 source_repos + 非 readonly + 有 build_cmd)
+  │     ↓
+  ├── PatchLoop(最多 3 次重试)                               [Sprint 3]
+  │     │
+  │     ├── PatchGenerator: LLM 生成 unified diff
+  │     ├── PatchApplier:
+  │     │     1. git stash(脏工作区)
+  │     │     2. git checkout -b fix/agent/<incident-id>
+  │     │     3. git apply
+  │     │     4. git commit
+  │     │     5. build_cmd(超时 5min)
+  │     │     6. test_cmd(超时 10min,可选)
+  │     │     7. 任一失败 → reset --hard + clean -fd + branch -D + stash pop
+  │     │
+  │     └── 失败 → 把 diff 和错误信息回灌给 LLM 重试
+  │
+  ├── 三次都失败 → 升级人类,本地工作区彻底干净
+  │
+  └── 成功 → VerifiedPatch
+        ↓
+        Sprint 4 PR 工作流(如果配了 git_host)
+        │
+        ├── 限流检查(max_auto_merges_per_day)
+        ├── git push -u origin <branch>
+        ├── gh pr create
+        ├── 再次检查 PR CI 状态(失败 → 降级等人类)
+        ├── gh pr merge --squash --delete-branch
+        ├── DeployWatcher 等待部署信号
+        ├── ProductionWatcher 观察 5 分钟
+        │     ↳ 用 ParsedTrace.signature() 精确匹配复发
+        │
+        ├── 无复发 → 关闭 incident,IM 通知 ✅
+        └── 复发 → RevertGenerator 自动 git revert
+              + 创建 revert PR + 立即合并
+              + 升级人类 ⚠️
+```
+
+**安全约束**(每一层都独立兜底):
+
+| 层 | 约束 |
+|---|---|
+| PatchGenerator | 只接受标准 unified diff,带 `@@` 和 `+++` 行,否则视为生成失败 |
+| PatchApplier | 拒绝只修改测试文件的补丁(`Patch.touches_only_tests()` cheat guard) |
+| PatchApplier | 任何阶段失败 = `git reset --hard` + `git clean -fd` + `git branch -D` + `git stash pop`,工作区绝对干净 |
+| PatchLoop | 最多 3 次重试,失败次数都计入 limits 配额 |
+| Sprint 4 | merge 前再次查 CI,CI 红 → 降级等人类 |
+| Sprint 4 | `max_auto_merges_per_day=5` 默认上限 |
+| Sprint 4 | 复发检测严格匹配 signature(语言:类型:文件:行号),不做模糊匹配避免误报 |
+| Sprint 4 | 自动 revert 也算一次自动合并,防止恶性循环 |
+
+### 5.2 部署信号配置
+
+`deploy_signal` 告诉 Agent "怎么知道我的补丁已经部署到生产了".支持 4 种类型:
+
+```yaml
+# 1. HTTP 探活:GET 一个 URL,返回内容包含 commit_sha
+deploy_signal:
+  type: http
+  url: http://prod.example.com/version
+  expect_contains: "{commit_sha}"   # 自动替换为实际 commit
+  check_interval: 10                 # 每 10 秒探一次
+  timeout: 1800                      # 最多等 30 分钟
+
+# 2. 文件信号:某文件存在且包含 commit_sha
+deploy_signal:
+  type: file
+  path: /var/run/deploy/version.txt
+  expect_contains: "{commit_sha}"
+
+# 3. 命令信号:跑一个命令,exit 0 = 已部署
+deploy_signal:
+  type: command
+  cmd: "kubectl get deploy backend -o jsonpath='{.metadata.annotations.commit}' | grep {commit_sha}"
+
+# 4. 固定等待:简单等 N 秒(无 CD 环境)
+deploy_signal:
+  type: fixed_wait
+  seconds: 60
+```
+
+不配置 `deploy_signal` → 默认假设已部署,跳过等待直接进入观察期.
+
+### 5.3 生产观察期与自动 revert
+
+部署后,Agent 进入 **5 分钟观察期**(可在代码层调整 `duration` 参数).每 30 秒调用一次 `observe_fn`(默认从 `repo.log_path` tail 200 行),用 `ParsedTrace.signature()` 检查是否出现和原异常**相同 signature** 的复发.
+
+**4 种结局:**
+
+| 结局 | 含义 | 后续 |
+|---|---|---|
+| `OK` | 观察期满,无复发 | ✅ 关闭 incident,IM 通知成功 |
+| `FAILED_RECURRENCE` | 检测到原异常复发 | ⚠️ 启动 RevertGenerator,自动 revert + 升级 |
+| `OBSERVE_ERROR` | observe_fn 连续 3 次失败 | 升级人类("我合并了但看不到生产") |
+| `NO_BASELINE` | 无法从原 incident 提取 signature | 升级人类("不能做复发检测,需人工确认") |
+
+**Revert 失败也有兜底**:RevertGenerator 自身失败 → 立即升级人类("revert 也失败了,需要人立即介入").
+
+---
+
+## 6. 可观测性
+
+### 6.1 健康检查与 Metrics
+
+Agent 启动后默认在 `127.0.0.1:9876` 暴露:
+
+```bash
+# 健康检查 — JSON
+curl localhost:9876/healthz
+# {
+#   "status": "ok",                  # ok | degraded | error
+#   "mode": "patrol",
+#   "uptime": 12345.6,
+#   "current_target": "web-prod-01",
+#   "current_incident": "",
+#   "active_incidents": 0,
+#   "paused": false,
+#   "readonly": false,
+#   "last_loop_time": 1712345678.9,
+#   "llm_degraded": false,
+#   "pending_events": 0
+# }
+
+# Prometheus metrics
+curl localhost:9876/metrics
+```
+
+Metrics 示例输出:
+
+```
+# HELP ops_agent_uptime_seconds Agent uptime
+# TYPE ops_agent_uptime_seconds gauge
+ops_agent_uptime_seconds 12345
+
+# HELP ops_agent_mode Current mode
+# TYPE ops_agent_mode gauge
+ops_agent_mode{mode="patrol"} 1
+
+# HELP ops_agent_actions_total Actions executed
+# TYPE ops_agent_actions_total counter
+ops_agent_actions_total{target="web-prod",kind="restart"} 12
+ops_agent_actions_total{target="web-prod",kind="patch"} 5
+
+# HELP ops_agent_incidents_total Incidents by status
+# TYPE ops_agent_incidents_total counter
+ops_agent_incidents_total{target="web-prod",status="opened"} 17
+ops_agent_incidents_total{target="web-prod",status="closed"} 16
+
+# HELP ops_agent_llm_degraded LLM degraded state
+# TYPE ops_agent_llm_degraded gauge
+ops_agent_llm_degraded 0
+
+# HELP ops_agent_pending_events Pending events
+# TYPE ops_agent_pending_events gauge
+ops_agent_pending_events 0
+```
+
+接 Prometheus + Grafana 可视化:
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: ops-agent
+    static_configs:
+      - targets: ['ops-agent-host:9876']
+```
+
+### 6.2 审计日志
+
+每个关键事件都写入 `notebook/audit/YYYY-MM-DD.jsonl`(JSONL 格式,append-only,日滚动).
+
+事件类型包括:
+
+| 类型 | 字段 |
+|---|---|
+| `incident_opened` | target, severity, summary |
+| `incident_closed` | target, resolution |
+| `action_executed` | target, kind(restart/patch/...), command |
+| `action_denied` | target, reason(trust/limits/safety) |
+| `patch_generated` / `patch_applied` | repo, branch, commit_sha, attempts |
+| `pr_created` / `pr_merged` / `revert_triggered` | repo, pr_number, url |
+| `llm_call` | tokens, duration |
+| `llm_degraded` / `llm_recovered` | failure_count |
+| `human_override` | command, message |
+| `daily_report_sent` | date |
+
+`audit/` 目录默认**不**进 notebook 的 git commit(append-only 不可篡改).
+
+读取审计:
+
+```bash
+# 看今天的事件
+cat notebook/audit/$(date +%F).jsonl | jq
+
+# 统计某天事件类型
+cat notebook/audit/2026-04-10.jsonl | jq -r .type | sort | uniq -c
+```
+
+也可以在代码里:
+
+```python
+from audit import AuditLog
+log = AuditLog("notebook/audit")
+events = log.read_day("2026-04-10")
+counts = log.count_by_type()
+```
+
+### 6.3 IM 通知与日报
+
+**IM 通知**走 `notifier.yaml` 配置 + `PolicyNotifier` 策略包装.事件触发流程:
+
+```
+代码里调用 self._emit_notify("incident_opened", title, body, "warning")
+   ↓
+PolicyNotifier 检查 notify_on 白名单
+   ↓
+PolicyNotifier 检查 quiet_hours(critical 例外)
+   ↓
+SlackNotifier / DingTalkNotifier / FeishuNotifier 发 webhook
+```
+
+发送失败不阻塞主循环(只记 logger.warning).
+
+**日报**:`reporter.py` 在主循环里检查 `should_send_today()`,如果今天还没发过就调用 LLM 总结昨天的审计日志生成 markdown 日报,通过 IM 推送.LLM 失败 → 自动回退到模板化纯统计日报,**永不失败**.
+
+防重靠 `marker_dir/sent-YYYY-MM-DD` 空文件标记,跨进程持久.
+
+---
+
+## 7. 安全与紧急停止
+
+### 信任分级
+
+| Level | 描述 | 谁批准 |
+|---|---|---|
+| **L0** | 只读观察(tail/grep/cat/ps/df...) | 自动 |
+| **L1** | 写笔记(notebook 内的 markdown) | 自动 |
+| **L2** | 服务操作(重启/改配置) | permissions.md 规则 |
+| **L3** | 代码改动(git apply/PR) | 限流 + 自动验证 |
+| **L4** | 破坏性操作(`rm -rf /` / `DROP TABLE` / `mkfs` / ...) | **永远禁止**,黑名单硬编码 |
+
+### 紧急停止三种触发方式
+
+**1. 文件触发**:
+
+```bash
+# 创建文件 → Agent 下次循环检测到 → 立即只读
+touch /var/run/ops-agent.stop
+
+# 删除文件恢复
+rm /var/run/ops-agent.stop
+```
+
+**2. 信号触发**:
+
+```bash
+# SIGUSR1 → 紧急停止
+kill -USR1 $(pgrep -f ops-agent)
+```
+
+**3. CLI 触发**:
 
 ```
 > readonly on
 ```
 
-Agent 会立即切换到只读模式，不再执行任何修改操作。
+无论哪种触发,Agent 会:
+1. 立刻把 `readonly = True`
+2. 拒绝任何 L2+ 操作(L0/L1 仍可执行)
+3. 在 IM 频道告警
+4. 写入审计日志
+5. 等待人类显式 `readonly off` 才恢复
 
-或者直接 Ctrl+C 退出。
+### 黑名单
 
----
+`safety.py` 维护一个硬编码的危险命令模式列表,Agent 输出的命令在执行前会被这个列表逐项匹配.无论 LLM 怎么"被说服",这一关都过不去:
 
-## 11. 常见问题排查
-
-### 11.1 启动时报错 `Command blocked (matches '...')`
-
-**原因**：黑名单误判。理论上不应该再发生（已修复）。如果还遇到：
-
-1. 把完整的报错命令贴出来
-2. 检查 `tools.py` 的 `BLACKLIST_PATTERNS`
-3. 临时绕过：把命令换个写法
-
-### 11.2 启动时报错 `pip install anthropic` / `pip install openai`
-
-**原因**：缺少 LLM SDK。
-
-```bash
-pip install anthropic openai
-```
-
-### 11.3 SSH 密码登录失败 `sshpass: command not found`
-
-**原因**：没装 sshpass。
-
-```bash
-# macOS
-brew install hudochenkov/sshpass/sshpass
-
-# Ubuntu
-sudo apt install sshpass
-```
-
-或者改用 SSH 密钥认证：
-
-```bash
-ssh-keygen -t ed25519
-ssh-copy-id user@target-host
-python main.py --target user@target-host --key ~/.ssh/id_ed25519
-```
-
-### 11.4 Agent 不响应人类输入
-
-**可能原因**：
-
-1. Agent 正在等 LLM 回复——稍等几秒
-2. Agent 进入了应急模式正在密集处理——输入 `stop` 中断
-3. stdin 被其他进程占用——用 Docker 时记得加 `-it`
-
-### 11.5 Agent 频繁误判正常状态为异常
-
-**原因**：LLM 对你的系统不熟。
-
-**解决**：
-
-1. 检查 `system-map.md` 是否准确，手动修正
-2. 在 `README.md` 里加一段"什么是正常的"说明
-3. 在 `playbook/` 里加 `false-positives.md` 列出常见误报模式
-
-### 11.6 LLM 调用超时或 API 报错
-
-**临时解决**：
-
-- 检查网络：`curl -v https://api.anthropic.com`
-- 检查 API Key 余额
-- 切换到其他 Provider 试试
-
-**长期方案**：使用本地部署的 LLM（通过 OpenAI 兼容接口）。
-
-### 11.7 Notebook 越来越大怎么办
-
-Agent 会自动归档已关闭的 Incident 到 `incidents/archive/`。如果太多了：
-
-```bash
-cd notebook/incidents/archive
-# 把 30 天前的归档压缩
-find . -name "*.md" -mtime +30 | tar czf old-incidents.tar.gz -T -
-find . -name "*.md" -mtime +30 -delete
-git add -A && git commit -m "Archive old incidents"
-```
+- `rm -rf /` / `rm -rf /*` / `rm -rf ~`
+- `mkfs.*` / `dd if=`
+- `DROP DATABASE` / `DROP TABLE` / `TRUNCATE`
+- `shutdown` / `reboot` / `halt` / `poweroff`
+- `chown -R / *` / `chmod -R 777 /`
+- ...完整列表见 `safety.py`
 
 ---
 
-## 12. 常用场景示例
+## 8. 扩展
 
-### 12.1 场景：第一次部署到测试环境
+### 8.1 新增 Playbook
 
-```bash
-# 1. 用只读模式跑 24 小时观察 Agent 的判断
-export OPS_LLM_API_KEY='...'
-python main.py --target user@test-server --key ~/.ssh/id_rsa --readonly
-
-# 2. 观察 notebook/incidents/active/ 看 Agent 创建了哪些事件
-ls notebook/incidents/active/
-
-# 3. 看 Agent 的诊断是否准确
-cat notebook/incidents/active/*.md
-
-# 4. 觉得靠谱了，关闭只读模式
-> readonly off
-```
-
-### 12.2 场景：监控生产服务器（保守配置）
-
-编辑 `notebook/config/permissions.md`：
+往 `notebook/playbook/` 扔一个 markdown 文件即可,Agent 下次循环就能用到.格式自由,建议结构:
 
 ```markdown
-## 严格策略（生产环境）
-- 所有 L2 操作（重启/改配置）都必须人类批准
-- 工作日 9:00-18:00 可批准 L2 操作
-- 其他时间只允许 L1 及以下
-- L3 操作走 PR 流程，需要 code review
-```
-
-启动：
-
-```bash
-python main.py --target user@prod-server --key ~/.ssh/prod_key
-```
-
-### 12.3 场景：监控 K8s 集群
-
-OpsAgent 跑在能访问 K8s 的运维工作站上：
-
-```bash
-# 确保 kubectl 配置可用
-kubectl get nodes
-
-# 启动 Agent（local 模式即可，因为 kubectl 命令在本地执行）
-python main.py
-```
-
-Agent 入职探索时会自动发现 K8s 并把 `kubectl get pods` 等命令加入观察列表。
-
-### 12.4 场景：让 Agent 帮你写一份系统报告
-
-```
-> 给我一份这台服务器最近一周的运行报告
-
-[Agent 会自动:
- 1. 翻 incidents/archive 看一周内的事件
- 2. 跑命令收集当前指标
- 3. 综合写一份 markdown 报告
- 4. 保存到 lessons/weekly-report-2026-04-08.md]
-```
-
-### 12.5 场景：手动添加一个 Playbook
-
-```bash
-# 直接在 notebook 目录里创建文件
-cat > notebook/playbook/redis-memory-full.md << 'EOF'
-# Redis 内存满
+# nginx 502 Bad Gateway
 
 ## 什么时候用我
-- redis-cli INFO memory 显示 used_memory_rss 接近 maxmemory
-- 应用报 OOM command not allowed when used memory > maxmemory
+- nginx 错误日志出现 connect() failed (111: Connection refused)
+- 上游服务返回 502
 
 ## 先查什么
-1. `redis-cli INFO memory` 查内存详情
-2. `redis-cli INFO clients` 查连接数
-3. `redis-cli --bigkeys` 找大 key
-4. `redis-cli MEMORY STATS` 看内存分布
+- `systemctl status <upstream>` 看后端是否在跑
+- `tail -n 100 /var/log/nginx/error.log` 看具体错误
+- `ss -tlnp | grep <port>` 看端口是否监听
 
 ## 怎么修
-- 临时：清理过期 key `redis-cli --scan --pattern "*tmp*" | xargs redis-cli DEL`
-- 中期：调整 maxmemory-policy 为 allkeys-lru
-- 长期：扩容 Redis 实例或拆分
+1. 上游进程死了 → `systemctl restart <upstream>`
+2. 上游连接池满了 → 检查 `/etc/nginx/nginx.conf` 中的 `keepalive`
+3. 上游 OOM → 看 dmesg + 调整内存
 
 ## 验证标准
-- used_memory < maxmemory * 0.8
-- 应用读写恢复正常
-EOF
+- `curl http://localhost/` 返回 200
+- 错误日志连续 1 分钟无新增 502
 ```
 
-写完即生效，无需重启 Agent。
+Agent 在 `find_relevant` 阶段会通过关键词匹配找到这个 playbook 并塞进 prompt.
+
+### 8.2 新增 Git Host / Notifier 通道
+
+`git_host.py` 和 `notifier.py` 都是抽象基类 + 多个实现.加新通道只需:
+
+**Git Host**(参考 `GitHubClient` / `GitLabClient`):
+
+```python
+class GiteaClient(GitHostClient):
+    def push_branch(self, repo_path, branch): ...
+    def create_pr(self, repo_path, branch, base, title, body): ...
+    def merge_pr(self, repo_path, pr_number): ...
+    def get_pr_status(self, repo_path, pr_number): ...
+
+# 注册到工厂
+def make_client(host_type, run=None):
+    ...
+    if host_type == "gitea":
+        return GiteaClient(run=run)
+```
+
+**Notifier**(参考 `SlackNotifier`):
+
+```python
+class TeamsNotifier(_HTTPNotifier):
+    def send(self, title, content, urgency="info"):
+        payload = {
+            "text": f"{title}\n\n{content}",
+            "themeColor": {"info": "0078D7", "warning": "FF9900",
+                           "critical": "D13438"}.get(urgency),
+        }
+        return self._post(payload)
+
+# 注册到工厂
+def make_notifier(config, http_fn=None):
+    ...
+    if t == "teams":
+        return TeamsNotifier(config.webhook_url, http_fn=http_fn)
+```
 
 ---
 
-## 13. 环境变量参考
+## 9. 故障排查
 
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `OPS_LLM_PROVIDER` | `anthropic` | LLM 提供商：`anthropic` / `openai` / `zhipu` |
-| `OPS_LLM_MODEL` | 各 Provider 默认 | 模型名称 |
-| `OPS_LLM_API_KEY` | （无） | LLM API Key |
-| `OPS_LLM_BASE_URL` | （无） | 自定义 API 地址（用于本地模型或代理） |
-| `OPS_SSH_PASSWORD` | （无） | SSH 密码（推荐用环境变量传） |
-
-各 Provider 的默认模型：
-
-| Provider | 默认模型 |
-|---|---|
-| anthropic | `claude-sonnet-4-20250514` |
-| openai | `gpt-4o` |
-| zhipu | `glm-4-plus` |
-
----
-
-## 14. 命令行参数参考
+### Agent 启动失败
 
 ```
-python main.py [OPTIONS]
+RuntimeError: pip install anthropic
+```
+→ 装依赖:`pip install -r requirements.txt`
+
+```
+ValueError: Unsupported provider: xxx
+```
+→ `OPS_LLM_PROVIDER` 只支持 `anthropic` / `openai` / `zhipu`
+
+### Agent 不响应人类输入
+
+- 看是不是处于 LLM 流式生成中(终端有"思考中..."提示)— 输入会立刻打断它
+- 检查 `pause` 状态:`status` 命令看一下
+- 极端情况下 `Ctrl-C` 退出后重启,状态会从 `state.json` 恢复
+
+### 健康端点 401/connection refused
+
+- 端口被占用?改 port:看 `start_health_server` 调用处
+- 默认监听 `127.0.0.1`,远程访问不到 — 故意的安全措施
+
+### 补丁应用失败
+
+```
+git apply failed (rc=1)
 ```
 
-| 参数 | 默认值 | 说明 |
-|---|---|---|
-| `--notebook PATH` | `./notebook` | Notebook 目录路径 |
-| `--target USER@HOST` | （空，本机）| SSH 目标系统 |
-| `--port N` | `22` | SSH 端口 |
-| `--key PATH` | （空）| SSH 私钥路径 |
-| `--password` | 关闭 | 使用密码认证（需 sshpass） |
-| `--readonly` | 关闭 | 只读模式，不执行任何修改 |
-| `--debug` | 关闭 | 调试日志（显示 LLM 调用详情） |
+排查顺序:
+1. 看 incident 笔记里的 `apply_output` 字段 — 通常是 LLM 生成的 diff context 不匹配
+2. PatchLoop 会自动重试 3 次,看是不是都失败了
+3. 失败时本地工作区**应该**已彻底回滚.如果没有,手动:
+   ```bash
+   cd /opt/sources/backend
+   git status                    # 应该是 clean
+   git branch | grep fix/agent    # 应该没有遗留分支
+   git stash list                 # 看是否有遗留 stash
+   ```
 
-### 完整示例
+### LLM 进入 degraded 状态
+
+```
+🚨 LLM 调用持续失败,已切换到只读模式
+```
+
+- 检查 API key 是否失效:`echo $OPS_LLM_API_KEY`
+- 检查网络:`curl https://api.anthropic.com`
+- 检查余额/配额
+- Agent 会每 5 分钟自动尝试恢复,恢复后 IM 频道会通知
+
+### Notebook 损坏
 
 ```bash
-# 本机监控
-python main.py
+# 手动校验
+cd notebook && git fsck
 
-# 远程监控（密钥）
-python main.py --target ops@10.0.0.1 --key ~/.ssh/id_rsa
-
-# 远程监控（密码 + 自定义端口）
-export OPS_SSH_PASSWORD='xxx'
-python main.py --target ops@10.0.0.1 --port 2222 --password
-
-# 只读 + 自定义 Notebook 路径 + 调试
-python main.py \
-  --notebook /var/lib/ops-agent/notebook \
-  --target ops@prod.example.com \
-  --key /etc/ops-agent/prod.key \
-  --readonly \
-  --debug
+# 如果配了远端
+# Agent 会在启动时尝试自动从远端恢复
+# 手动恢复:
+mv .git .git.broken
+git init
+git remote add origin <remote-url>
+git fetch origin
+git reset --hard origin/HEAD
 ```
+
+### IM 通知不发
+
+1. 检查 `notifier.yaml` 的 `type` 和 `webhook_url`
+2. 检查 `notify_on` 白名单是否包含触发事件
+3. 检查 `quiet_hours` 是否在静音时段
+4. 看日志:`grep notifier journalctl -u ops-agent`
 
 ---
 
-## 附录 A：Agent 输出图标含义
+## 10. 运维实践
 
-| 图标 | 含义 |
-|---|---|
-| 💬 | Agent 的常规消息 |
-| ✅ | 操作成功 |
-| ⚠️ | 警告 / 需要注意 |
-| 🚨 | 紧急 / 升级给人类 |
-| ❓ | Agent 在向你提问 |
-| 🔧 | Agent 正在执行操作 |
+### 渐进信任策略
 
-## 附录 B：项目文件清单
+不要一上来就让 Agent 自动跑所有事情.推荐的渐进路径:
 
+| 阶段 | 持续时间 | 配置 |
+|---|---|---|
+| **观察期** | 1-2 周 | `--readonly`,只看 Agent 怎么诊断,不让它动手 |
+| **辅助期** | 2-4 周 | 关闭 readonly,但 `permissions.md` 严格,大部分动作都升级人类 |
+| **自治期 L2** | 持续 | 放开常规 L2(重启/清日志),关闭 Sprint 3-4 的代码自动修复(`source_repos` 不配 `git_host`) |
+| **自治期 L3** | 持续 | 启用代码自动修复,但 `max_auto_merges_per_day=2` 起步,慢慢加 |
+
+### Notebook 备份
+
+`notebook/` 是 Agent 的全部记忆.推荐:
+
+```bash
+# 1. 配置远端(用于灾难恢复)
+cd notebook
+git remote add origin git@github.com:org/ops-agent-notebook.git
+git push -u origin main
+
+# 2. 在 main.py 启动参数里启用自动 push(待 cron 或人工触发)
+# 3. 或者每天 cron 一次:
+0 3 * * * cd /var/lib/ops-agent/notebook && git push origin main
 ```
-ops-agent/
-├── main.py              # Agent 主循环
-├── llm.py               # LLM 调用抽象（支持 anthropic/openai/zhipu）
-├── notebook.py          # Notebook 读写
-├── tools.py             # 命令执行工具箱
-├── trust.py             # 授权引擎
-├── chat.py              # 人机交互通道
-├── prompts/
-│   ├── system.md        # System prompt（Agent 的自我认知）
-│   ├── observe.md       # "现在该看什么"
-│   ├── assess.md        # "这些输出正常吗"
-│   ├── diagnose.md      # "根因是什么"
-│   ├── plan.md          # "怎么修"
-│   ├── verify.md        # "修好了吗"
-│   └── reflect.md       # "这次学到了什么"
-├── notebook/            # Agent 的笔记本（git 仓库）
-│   ├── config/
-│   │   ├── permissions.md
-│   │   ├── watchlist.md
-│   │   └── contacts.md
-│   └── playbook/
-│       ├── nginx-502.md
-│       ├── oom-killer.md
-│       └── disk-full.md
-├── test_basic.py        # 基础功能测试
-├── test_blacklist.py    # 黑名单回归测试
-├── requirements.txt
-├── Dockerfile
-└── README.md
+
+### Lessons 蒸馏
+
+每次 incident 处理完 Agent 都会写 `notebook/lessons/<incident-id>-reflection.md`.建议每周翻一遍,把通用的教训手动整理成 playbook.
+
+### 监控 OpsAgent 自身
+
+OpsAgent 帮你管系统,但谁来管 OpsAgent?推荐:
+
+1. **Prometheus 抓 `/metrics`**,设告警:
+   - `ops_agent_llm_degraded == 1` 持续 10min → critical
+   - `ops_agent_uptime_seconds < 60` → 进程刚重启过,值得看
+   - `rate(ops_agent_actions_total[5m]) > 10` → 异常高频动作
+2. **Watchdog 探活 `/healthz`** → 失败重启
+3. **审计日志推送 SIEM** — `vector` / `fluent-bit` 抓 `notebook/audit/*.jsonl`
+4. **IM 通知双通道** — 普通通知到 Slack,critical 也发到 PagerDuty
+
+### Token 成本控制
+
+Agent 每次 LLM 调用都会记录 token,在 `limits.yaml` 里:
+
+```yaml
+llm_tokens_per_hour: 200000     # 触发限流后只允许 L0 操作
+llm_tokens_per_day: 1000000     # 触发后强制升级所有动作
 ```
+
+实际成本(以 Claude Sonnet 4 为例):
+- 一次诊断循环 ≈ 5-10K input + 1-2K output ≈ $0.05-0.10
+- 一次完整代码修复(含 3 次重试)≈ 30-50K tokens ≈ $0.30-0.50
+- 一份日报 ≈ 5K tokens ≈ $0.02
+
+### 多副本部署(谨慎)
+
+**当前 v1.0 是单进程假设**,以下组件不是分布式安全的:
+
+- `state.json` — 单文件,多进程会互相覆盖
+- `pending_events.jsonl` — append-only 但 pop 时 rewrite 有竞态
+- `LimitsEngine` — 内存 deque,多副本独立计数
+- `auto_merge_timestamps` — 同上
+
+如果必须 HA 部署,要么:
+1. **主备模式**:一主一备,备机 readonly,主机崩溃时手动切
+2. **重新设计共享存储层**:把上述四项落到 redis / etcd
+
+不推荐"双活"直接部署 v1.0.
 
 ---
 
-## 反馈与贡献
+## 附录: Sprint 历史
 
-如果遇到问题或有改进建议，欢迎提 issue。最有价值的贡献是**分享你的 Playbook**——你写的每一个 Playbook 都可能帮助别人的系统更稳定。
+| Sprint | 内容 | 测试数 | 累计 |
+|---|---|---|---|
+| 0 | 基线(basic + blacklist) | 85 | 85 |
+| 1 | 多目标 / 爆炸半径 / 紧急停止 | 53 | 138 |
+| 2 | 源码地图 / 异常反向定位 | 51 | 189 |
+| 3 | 补丁生成 / 本地验证 | 56 | 245 |
+| 4 | PR 工作流 / 生产观察 / revert | 74 | 319 |
+| 5 | 状态持久化 / 健康检查 / LLM 降级 | 79 | 398 |
+| 6 | 审计 / IM 通知 / Metrics / 日报 | 95 | **493** |
+
+每个 Sprint 的设计回顾在 `notebook/lessons/sprint{1..6}-retrospective.md`,值得读.
