@@ -99,6 +99,16 @@ class OpsAgent:
         self._running = True
         self._prompts = {}
 
+        # ── 异常指纹静默（修复：避免异常持续存在时反复开 incident）──
+        # 结构: fingerprint -> last_fired_timestamp
+        self._issue_fingerprints: dict = {}
+        # 默认静默窗口 30 分钟,可被 limits.yaml 的 silence_window_seconds 覆盖
+        self._silence_window_seconds = getattr(
+            self.limits.config, "silence_window_seconds", 1800
+        )
+        # 标记 _loop_once 本轮是否已经睡过,避免 run() 里再睡一次
+        self._already_slept_this_loop = False
+
         # ── Sprint 3: 补丁生成与本地验证 ──
         self._last_locate_result = None  # Sprint 2 在 _diagnose 中填充
         self._last_error_text = ""       # Sprint 4: 复发检测的 baseline 文本
@@ -439,9 +449,18 @@ class OpsAgent:
 
         while self._running:
             try:
+                self._already_slept_this_loop = False
                 self._loop_once()
                 self.last_loop_time = time.time()
                 self.save_state()  # Sprint 5: 每轮 checkpoint
+                # 兜底:如果本轮没睡过且当前在巡检,强制 sleep 一个 patrol 间隔。
+                # 修复的核心:异常处理路径(escalate/DENY/ASK 否决/readonly 等)
+                # 过去直接 return,主循环立刻重进 _loop_once → 反复开 incident。
+                if (not self._already_slept_this_loop
+                        and self.mode == self.PATROL
+                        and not self.paused
+                        and self._running):
+                    self._interruptible_sleep(self.INTERVALS.get("patrol", 60))
             except KeyboardInterrupt:
                 self.chat.say("收到退出信号，下班了。", "info")
                 break
@@ -541,6 +560,7 @@ class OpsAgent:
 
         if not observations:
             self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
+            self._already_slept_this_loop = True
             return
 
         # ── 判断 ──
@@ -553,12 +573,28 @@ class OpsAgent:
         if assessment.get("status") == "NORMAL":
             self.chat.log("一切正常")
             self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
+            self._already_slept_this_loop = True
             return
 
         # ── 发现异常 ──
         severity = assessment.get("severity", 5)
         summary = assessment.get("summary", "发现异常")
         self.current_issue = summary
+
+        # ── 静默窗口检查(修复:同一目标同一症状短时间内不重复开 incident)──
+        fp = self._issue_fingerprint(self.current_target.name, summary)
+        now_ts = time.time()
+        last_fired = self._issue_fingerprints.get(fp)
+        if last_fired is not None and (now_ts - last_fired) < self._silence_window_seconds:
+            remaining = int(self._silence_window_seconds - (now_ts - last_fired))
+            self.chat.log(
+                f"已知未解决异常(静默中,还剩 {remaining}s): "
+                f"[{self.current_target.name}] {summary}"
+            )
+            self.current_issue = ""
+            return
+        # 记录首次出现时间,进入处理流程
+        self._issue_fingerprints[fp] = now_ts
 
         self.chat.notify(f"[{self.current_target.name}] 发现异常（严重度 {severity}/10）：{summary}", "warning")
         self.mode = self.INVESTIGATE
@@ -682,6 +718,8 @@ class OpsAgent:
         if verified:
             self.chat.say("验证通过，问题已修复！", "success")
             self.notebook.append_to_incident(self.current_incident, "\n## 验证通过\n")
+            # 修复生效,清除指纹,让下次复发能立刻再次进入处理流程
+            self._clear_issue_fingerprint(self.current_target.name, self.current_issue)
         else:
             self.chat.say("验证未通过，尝试回滚...", "warning")
             self.notebook.append_to_incident(self.current_incident, "\n## 验证未通过\n")
@@ -1398,6 +1436,23 @@ class OpsAgent:
             self.current_incident = None
             self.limits.record_incident_end()
 
+    def _issue_fingerprint(self, target_name: str, summary: str) -> str:
+        """生成异常指纹用于静默去重。
+
+        同一目标、同一症状归一化后应得到相同的指纹。
+        为了对小幅抖动鲁棒(比如错误里带时间戳/行号),我们只取
+        summary 中的字母数字字符,截断后与 target_name 拼接。
+        """
+        import hashlib
+        normalized = re.sub(r"[^\w\u4e00-\u9fff]+", "", summary or "")[:120]
+        raw = f"{target_name}::{normalized}"
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _clear_issue_fingerprint(self, target_name: str, summary: str):
+        """修复验证通过后清除指纹,允许同类问题下次复发时立刻再次触发。"""
+        fp = self._issue_fingerprint(target_name, summary)
+        self._issue_fingerprints.pop(fp, None)
+
     def _classify_action(self, action_text: str) -> str:
         """从动作文本中识别动作类型(给限制引擎用)"""
         text = action_text.lower()
@@ -1477,6 +1532,24 @@ class OpsAgent:
         if lower == "readonly off":
             self.readonly = False
             self.chat.say("已切换到正常模式。", "info")
+            return
+
+        if lower in ("clear silence", "unmute", "clear-silence"):
+            n = len(self._issue_fingerprints)
+            self._issue_fingerprints.clear()
+            self.chat.say(f"已清空异常静默表({n} 条),下一轮巡检会重新判断。", "info")
+            return
+
+        if lower in ("show silence", "silence"):
+            if not self._issue_fingerprints:
+                self.chat.say("当前无静默中的异常。", "info")
+            else:
+                now_ts = time.time()
+                lines = [f"静默中的异常({len(self._issue_fingerprints)} 条,窗口={self._silence_window_seconds}s):"]
+                for fp, ts in sorted(self._issue_fingerprints.items(), key=lambda x: x[1], reverse=True):
+                    remaining = max(0, int(self._silence_window_seconds - (now_ts - ts)))
+                    lines.append(f"   {fp}  剩余 {remaining}s")
+                self.chat.say("\n".join(lines), "info")
             return
 
         # ═══ 多目标管理指令 ═══
@@ -1641,6 +1714,8 @@ class OpsAgent:
             "   readonly on/off  切换只读模式\n"
             "   freeze        紧急冻结(禁止所有 L2+ 操作)\n"
             "   unfreeze      解除紧急冻结\n"
+            "   silence       查看静默中的异常指纹\n"
+            "   clear silence 清空静默表,下一轮重新判断\n"
             "   quit          让我下班\n"
             "   ─── 多目标 ───\n"
             "   targets (lt)          列出所有管理的目标\n"
