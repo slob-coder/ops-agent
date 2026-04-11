@@ -444,6 +444,16 @@ class OpsAgent:
         except Exception as e:
             logger.warning(f"start_health_server crashed: {e}")
 
+        # ── 自修复 probation 自检 ──
+        # 如果上次退出是因为自修复合并,新进程启动时要先跑一遍测试确认没改坏
+        selfdev_path = os.environ.get("OPS_AGENT_SELFDEV_PATH", "")
+        if selfdev_path:
+            try:
+                from self_repair import run_probation_if_pending
+                run_probation_if_pending(self, selfdev_path)
+            except Exception as e:
+                logger.warning(f"probation check crashed: {e}")
+
         self.onboard()
         self.chat.say("已上岗，进入巡检模式。", "success")
 
@@ -1436,6 +1446,33 @@ class OpsAgent:
             self.current_incident = None
             self.limits.record_incident_end()
 
+    def snapshot_state(self) -> dict:
+        """把自己当前的运行时状态 dump 成 dict,给自修复会话用。
+
+        只暴露字段的"当前值",不暴露任何可调用对象或句柄。
+        """
+        limits_snap = {}
+        try:
+            limits_snap = self.limits.status()
+        except Exception:
+            pass
+        return {
+            "mode": self.mode,
+            "paused": self.paused,
+            "readonly": self.readonly,
+            "llm_degraded": getattr(self, "llm_degraded", False),
+            "current_target": self.current_target.name if self.current_target else None,
+            "target_count": len(self.targets),
+            "current_incident": self.current_incident,
+            "current_issue": self.current_issue,
+            "last_loop_time": self.last_loop_time,
+            "uptime_seconds": int(time.time() - self.start_time),
+            "silence_window_seconds": self._silence_window_seconds,
+            "silenced_fingerprints_count": len(self._issue_fingerprints),
+            "limits": limits_snap,
+            "intervals": dict(self.INTERVALS),
+        }
+
     def _issue_fingerprint(self, target_name: str, summary: str) -> str:
         """生成异常指纹用于静默去重。
 
@@ -1452,6 +1489,62 @@ class OpsAgent:
         """修复验证通过后清除指纹,允许同类问题下次复发时立刻再次触发。"""
         fp = self._issue_fingerprint(target_name, summary)
         self._issue_fingerprints.pop(fp, None)
+
+    def _run_self_repair(self, description: str):
+        """触发一次自修复会话。
+
+        运行目录和 selfdev 工作区必须物理分离,由 OPS_AGENT_SELFDEV_PATH
+        环境变量指定。未配置则拒绝执行。
+        """
+        # 紧急冻结检查
+        emergency_stop = Path(self.notebook.path) / "EMERGENCY_STOP_SELF_MODIFY"
+        if emergency_stop.exists():
+            self.chat.say(
+                f"🚨 自修复已被冻结(EMERGENCY_STOP_SELF_MODIFY 存在)。\n"
+                f"原因:\n{emergency_stop.read_text()[:500]}\n"
+                f"人类确认后删除该文件可恢复。",
+                "critical"
+            )
+            return
+
+        selfdev_path = os.environ.get("OPS_AGENT_SELFDEV_PATH", "")
+        if not selfdev_path:
+            self.chat.say(
+                "自修复未配置。请设置环境变量 OPS_AGENT_SELFDEV_PATH "
+                "指向一个独立的 ops-agent git 工作区(不能与运行目录相同)。",
+                "warning"
+            )
+            return
+
+        if self.patch_loop is None:
+            self.chat.say(
+                "PatchLoop 未初始化,无法自修复。请检查启动日志。", "warning"
+            )
+            return
+
+        try:
+            from self_repair import SelfRepairSession
+        except Exception as e:
+            logger.exception("SelfRepairSession 导入失败")
+            self.chat.say(f"自修复模块加载失败: {e}", "warning")
+            return
+
+        session = SelfRepairSession(
+            agent=self,
+            repo_path=selfdev_path,
+        )
+        result = session.run(description)
+
+        if result.success:
+            # 成功路径会触发 3 秒后重启,这里只打一条
+            self.chat.say(
+                f"自修复成功: {result.reason}\n"
+                f"分支: {result.branch}\n"
+                f"pre-tag: {result.pre_tag}",
+                "success"
+            )
+        else:
+            self.chat.say(f"自修复未完成: {result.reason}", "warning")
 
     def _classify_action(self, action_text: str) -> str:
         """从动作文本中识别动作类型(给限制引擎用)"""
@@ -1550,6 +1643,21 @@ class OpsAgent:
                     remaining = max(0, int(self._silence_window_seconds - (now_ts - ts)))
                     lines.append(f"   {fp}  剩余 {remaining}s")
                 self.chat.say("\n".join(lines), "info")
+            return
+
+        # ═══ 自修复命令 ═══
+        if lower.startswith("self-fix") or lower.startswith("selffix"):
+            # 提取描述部分
+            parts = msg.split(None, 1)
+            description = parts[1].strip() if len(parts) > 1 else ""
+            if not description:
+                self.chat.say(
+                    "用法: self-fix <问题描述>\n"
+                    "例: self-fix 巡检异常路径 return 后没 sleep,反复开 incident",
+                    "info"
+                )
+                return
+            self._run_self_repair(description)
             return
 
         # ═══ 多目标管理指令 ═══
@@ -1716,6 +1824,7 @@ class OpsAgent:
             "   unfreeze      解除紧急冻结\n"
             "   silence       查看静默中的异常指纹\n"
             "   clear silence 清空静默表,下一轮重新判断\n"
+            "   self-fix <描述> 触发一次自修复会话(修改 ops-agent 自己)\n"
             "   quit          让我下班\n"
             "   ─── 多目标 ───\n"
             "   targets (lt)          列出所有管理的目标\n"
