@@ -477,12 +477,13 @@ class OpsAgent:
             except (LLMInterrupted, CommandInterrupted) as e:
                 # 被人类打断 —— 优雅处理：放弃当前任务，立刻处理人类消息
                 self.chat.log(f"已中断当前任务（{type(e).__name__}）")
-                # 如果当前在调查 Incident，标记为被中断
+                # 如果当前在调查 Incident，标记为被中断并关闭归档
                 if self.current_incident:
                     self.notebook.append_to_incident(
                         self.current_incident,
                         f"\n## 被人类中断 @ {datetime.now().strftime('%H:%M:%S')}\n"
                     )
+                    self._close_incident("被人类中断")
                 # 重置工作模式
                 self.mode = self.PATROL
                 self.current_issue = ""
@@ -494,9 +495,10 @@ class OpsAgent:
                 if not self.llm_degraded:
                     self.llm_degraded = True
                     self.readonly = True
-                    self.chat.escalate(
-                        "LLM 调用持续失败,已切换到只读模式",
+                    self.chat.say(
+                        f"🚨 LLM 调用持续失败，已切换到只读模式。\n"
                         f"原因: {e}\n我会每 5 分钟尝试自动恢复。请检查 API key / 网络。",
+                        "critical",
                     )
                 self._interruptible_sleep(300)
             except Exception as e:
@@ -634,8 +636,30 @@ class OpsAgent:
                 self.current_incident,
                 f"\n## 升级给人类\n{diagnosis.get('hypothesis', '无法确定根因')}\n",
             )
-            self.chat.escalate(summary, diagnosis.get("hypothesis", ""))
-            self.notebook.commit(f"Escalated: {summary}")
+            # 修复: 用 ask_question 阻塞等待人类回复,而非 escalate(say) 单向通知。
+            # 这样人类的回复走 _approval_queue 而不是 inbox,
+            # 不会触发 interrupted 标志,也就不会引起 LLMInterrupted 循环。
+            escalate_msg = f"🚨 遇到超出我能力的问题，需要你的帮助：\n{summary}"
+            if diagnosis.get("hypothesis"):
+                escalate_msg += f"\n详情：{diagnosis['hypothesis']}"
+            escalate_msg += "\n\n请给出你的处理建议（或输入 'skip' 跳过，我会继续巡检）："
+            human_advice = self.chat.ask_question(escalate_msg, timeout=1800)
+
+            if human_advice and human_advice.strip().lower() not in ("skip", "跳过", ""):
+                # 人类给了具体建议 → 记录到 Incident 并作为指令处理
+                self.notebook.append_to_incident(
+                    self.current_incident,
+                    f"\n## 人类建议\n{human_advice}\n",
+                )
+                self._close_incident(f"已升级给人类: {summary}")
+                self.notebook.commit(f"Escalated & answered: {summary}")
+                # 把人类建议当作指令推入 inbox，下一轮 _drain_human_messages 会处理
+                self.chat.inbox.put(human_advice)
+            else:
+                # 人类跳过或超时 → 关闭 Incident，静默窗口内不再重复
+                self._close_incident(f"已升级给人类(跳过/超时): {summary}")
+                self.notebook.commit(f"Escalated: {summary}")
+
             self.mode = self.PATROL
             self.current_issue = ""
             return
@@ -653,7 +677,9 @@ class OpsAgent:
 
         if not action_plan:
             self.chat.say("无法制定修复方案，升级给人类。", "critical")
+            self._close_incident("无法制定修复方案，已升级给人类。")
             self.mode = self.PATROL
+            self.current_issue = ""
             return
 
         self.notebook.append_to_incident(
@@ -683,17 +709,19 @@ class OpsAgent:
         target_service = self._extract_service_name(action_plan.action)
         allowed, reason = self.limits.check_action(action_type, target_service)
         if not allowed:
-            self.chat.say(f"⛔ 限制引擎拒绝执行: {reason}", "critical")
+            self.chat.say(
+                f"⛔ 限制引擎拒绝执行: {reason}\n"
+                f"动作: {action_plan.action}\n"
+                f"需要人类决策。",
+                "critical",
+            )
             self.notebook.append_to_incident(
                 self.current_incident,
                 f"\n## 限制拒绝\n{reason}\n升级给人类。\n",
             )
-            self.chat.escalate(
-                "动作被限制引擎拒绝,需要人类决策",
-                f"原因: {reason}\n动作: {action_plan.action}",
-            )
             self._close_incident(f"被限制引擎拒绝: {reason}")
             self.mode = self.PATROL
+            self.current_issue = ""
             return
 
         if decision == ASK:
@@ -735,11 +763,20 @@ class OpsAgent:
             self.notebook.append_to_incident(self.current_incident, "\n## 验证未通过\n")
             # 触发失败冷却期
             self.limits.record_failure()
-            # 简单回滚：通知人类
-            self.chat.escalate(
-                "修复未达预期效果",
-                f"执行了 {action_plan.action}，但验证未通过。请检查。",
+            # 修复: 用 ask_question 阻塞等待人类回复
+            verify_msg = (
+                f"❓ 修复未达预期效果：\n"
+                f"执行了 {action_plan.action}，但验证未通过。请检查。\n\n"
+                f"请给出你的处理建议（或输入 'skip' 跳过）："
             )
+            human_advice = self.chat.ask_question(verify_msg, timeout=1800)
+            if human_advice and human_advice.strip().lower() not in ("skip", "跳过", ""):
+                self.notebook.append_to_incident(
+                    self.current_incident,
+                    f"\n## 人类建议（验证失败后）\n{human_advice}\n",
+                )
+                # 把人类建议当作指令推入 inbox
+                self.chat.inbox.put(human_advice)
 
         # ── 复盘 ──
         self._reflect()
@@ -1007,7 +1044,7 @@ class OpsAgent:
         ok, push_out = host.push_branch(repo_path, branch)
         if not ok:
             self._note(f"push 失败,降级等人类: {push_out[:200]}")
-            self.chat.escalate("git push 失败", push_out[:300])
+            self.chat.say(f"🚨 git push 失败，需要人类检查。\n详情：{push_out[:300]}", "critical")
             return
 
         # 3. 创建 PR
@@ -1017,7 +1054,7 @@ class OpsAgent:
                                    title, body)
         if not pr_result.success:
             self._note(f"创建 PR 失败: {pr_result.error[:200]}")
-            self.chat.escalate("create_pr 失败", pr_result.error[:300])
+            self.chat.say(f"🚨 create_pr 失败，需要人类检查。\n详情：{pr_result.error[:300]}", "critical")
             return
         pr = pr_result.pr
         self.chat.say(f"✓ PR 已创建: {pr.url}", "success")
@@ -1047,7 +1084,7 @@ class OpsAgent:
             dstatus = self.deploy_watcher.wait_for_deploy(signal, commit_sha)
             if not dstatus.deployed:
                 self._note(f"部署信号超时: {dstatus.error}")
-                self.chat.escalate("部署信号超时", dstatus.error)
+                self.chat.say(f"🚨 部署信号超时，需要人类检查。\n详情：{dstatus.error}", "critical")
                 return
             self._note(f"部署确认: {dstatus.detail}")
 
@@ -1080,7 +1117,7 @@ class OpsAgent:
             self.chat.say("无法做复发检测(无 baseline),已合并但需人类确认", "warning")
         else:
             self._note(f"观察期异常: {wresult.detail}")
-            self.chat.escalate("生产观察期异常", wresult.detail)
+            self.chat.say(f"🚨 生产观察期异常，需要人类检查。\n详情：{wresult.detail}", "critical")
 
     def _run_auto_revert(self, repo, host, commit_sha: str,
                          original_branch: str, failure_reason: str) -> None:
@@ -1097,7 +1134,7 @@ class OpsAgent:
         except Exception as e:
             logger.exception("revert crashed")
             self._note(f"revert 异常: {e}")
-            self.chat.escalate("revert 异常", str(e))
+            self.chat.say(f"🚨 revert 异常，需要人类检查。\n详情：{e}", "critical")
             return
 
         if result.success:
@@ -1106,17 +1143,19 @@ class OpsAgent:
                 f"PR #{result.pr.number if result.pr else '?'}"
             )
             self.limits.record_auto_merge()  # revert 也算一次
-            self.chat.escalate(
-                "已自动 revert 失败的补丁",
+            self.chat.say(
+                f"🚨 已自动 revert 失败的补丁\n"
                 f"原 commit: {commit_sha[:8]}\n原因: {failure_reason}\n"
                 f"revert PR: {result.pr.url if result.pr else 'N/A'}\n"
                 "请人工评估根因并决定是否再次尝试修复。",
+                "critical",
             )
         else:
             self._note(f"revert 失败 stage={result.stage}: {result.error}")
-            self.chat.escalate(
-                "⚠️ 自动 revert 也失败了,需要人工立即介入",
+            self.chat.say(
+                f"🚨 ⚠️ 自动 revert 也失败了，需要人工立即介入！\n"
                 f"原 commit: {commit_sha}\n失败阶段: {result.stage}\n错误: {result.error}",
+                "critical",
             )
 
     def _build_pr_body(self, verified, repo, commit_sha: str) -> str:
