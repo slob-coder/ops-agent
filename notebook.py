@@ -162,6 +162,24 @@ class Notebook:
             f"**[{ts}] {role}**: {message}",
         )
 
+    def get_recent_conversation(self, limit: int = 20) -> str:
+        """读取最近 limit 条对话记录，用于给 LLM 提供上下文"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        content = self.read(f"conversations/{today}.md")
+        if not content:
+            return ""
+        lines = [l for l in content.strip().split("\n") if l.strip()]
+        recent = lines[-limit:]
+        return "\n".join(recent)
+
+    def read_incident(self, filename: str) -> str:
+        """读取活跃 Incident 的完整内容"""
+        content = self.read(f"incidents/active/{filename}")
+        if not content:
+            # 可能已归档
+            content = self.read(f"incidents/archive/{filename}")
+        return content
+
     # ── Sprint 5: 完整性校验与远端备份 ──
 
     def verify_integrity(self) -> tuple[bool, str]:

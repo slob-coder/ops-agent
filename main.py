@@ -1784,9 +1784,55 @@ class OpsAgent:
                 self.chat.say(f"找不到 {target}", "warning")
             return
 
+        # ═══ 协作排查模式 ═══
+
+        if lower in ("collab", "协作", "collaborate"):
+            self._enter_collab_mode()
+            return
+
         # ═══ 通用对话 / 任务委派（让 LLM 处理） ═══
 
+        self._handle_free_chat(msg)
+
+    # ═══════════════════════════════════════════
+    #  自由对话（带上下文）
+    # ═══════════════════════════════════════════
+
+    def _build_conversation_context(self) -> str:
+        """构建对话上下文块，供自由对话和协作模式使用"""
+        parts = []
+
+        # 当前 Incident 内容
+        if self.current_incident:
+            content = self.notebook.read_incident(self.current_incident)
+            if content:
+                # 截断避免超 token
+                if len(content) > 3000:
+                    content = content[:3000] + "\n...(已截断)"
+                parts.append(f"## 当前 Incident 记录\n{content}")
+
+        # 最近对话历史
+        recent = self.notebook.get_recent_conversation(limit=20)
+        if recent:
+            parts.append(f"## 最近对话记录\n{recent}")
+
+        # 当前问题摘要
+        if self.current_issue:
+            parts.append(f"## 当前正在关注的问题\n{self.current_issue}")
+
+        return "\n\n".join(parts) if parts else "（无历史上下文）"
+
+    def _handle_free_chat(self, msg: str):
+        """处理自由对话 / 任务委派 —— 带完整上下文，不可被中断
+
+        关键设计：
+        1. 注入当前 incident、最近对话、当前问题等上下文，避免 LLM 说"没有上下文"
+        2. allow_interrupt=False，因为这本身就是在处理人类输入，
+           新输入会进 inbox 在下一轮 _drain_human_messages 处理
+        """
         self.chat.log("正在思考你的指令...")
+
+        context = self._build_conversation_context()
 
         prompt = f"""人类同事给你发了一条消息。判断这是一个问题（要回答）还是一个任务（要执行）。
 
@@ -1795,6 +1841,9 @@ class OpsAgent:
 - 只读模式: {self.readonly}
 - 暂停: {self.paused}
 - 活跃 Incident: {self.current_incident or '无'}
+
+## 上下文
+{context}
 
 ## 人类的消息
 {msg}
@@ -1815,19 +1864,25 @@ class OpsAgent:
 
 记住：
 - 简洁友好，不要长篇大论
+- 结合上面的上下文来理解人类的问题
 - 只输出真正需要执行的命令
 - 如果是修改类操作（L2+），先说明你打算做什么，等批准
 """
 
-        response = self._ask_llm(prompt)
+        try:
+            response = self._ask_llm(prompt, allow_interrupt=False)
+        except LLMDegraded:
+            raise  # 降级异常仍需冒泡到主循环处理
+        except Exception as e:
+            self.chat.say(f"LLM 调用出错: {e}", "warning")
+            return
+
         commands = self._extract_commands(response)
 
         if commands:
-            # 有命令要执行
             self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
             cmd_results = []
             for cmd in commands[:8]:
-                # 命令执行也允许中断
                 if self.chat.is_interrupted():
                     self.chat.say("收到新指令，停止当前任务。", "info")
                     return
@@ -1837,17 +1892,148 @@ class OpsAgent:
 
             followup = f"""刚才的问题是：{msg}
 
+## 上下文
+{context}
+
 执行了以下命令，结果如下：
 {chr(10).join(cmd_results)}
 
-请基于这些结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。"""
-            final = self._ask_llm(followup)
+请基于上下文和命令结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。"""
+            try:
+                final = self._ask_llm(followup, allow_interrupt=False)
+            except LLMDegraded:
+                raise
+            except Exception as e:
+                self.chat.say(f"LLM 调用出错: {e}", "warning")
+                return
             self.chat.say(final)
         else:
-            # 纯文字回复
-            # 去掉 ```text ``` 包裹
             text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", response, flags=re.DOTALL).strip()
             self.chat.say(text or response)
+
+    # ═══════════════════════════════════════════
+    #  协作排查模式
+    # ═══════════════════════════════════════════
+
+    def _enter_collab_mode(self):
+        """进入协作排查模式 —— 人类和 Agent 一起定位问题
+
+        与普通对话的区别：
+        1. 维护多轮对话历史（不是每次都无状态）
+        2. 自动加载当前 incident / 最近操作上下文
+        3. 用 ask_question 阻塞等待，不触发 interrupted
+        4. 输入 'done' / '结束' 退出协作模式
+        """
+        self.chat.say(
+            "进入协作排查模式 🤝\n"
+            "我会保持对话上下文，你可以和我一起排查问题。\n"
+            "输入 done 或 结束 退出协作模式。",
+            "info",
+        )
+
+        # 初始化对话历史，注入当前上下文
+        base_context = self._build_conversation_context()
+        collab_history = []  # list of {"role": str, "content": str}
+
+        system = self._build_system_prompt()
+        system += (
+            "\n\n## 协作排查模式\n"
+            "你正在和人类同事一起排查问题。保持技术讨论风格，"
+            "主动提出排查思路和需要执行的命令。"
+            "如果需要执行命令来验证假设，用 ```commands``` 格式输出。\n"
+            f"\n## 当前上下文\n{base_context}"
+        )
+
+        while self._running:
+            # 用 ask_question 阻塞等待人类输入（走 _approval_queue，不触发 interrupted）
+            human_input = self.chat.ask_question(
+                "请输入你的想法（输入 done 退出协作）：",
+                timeout=1800,  # 30 分钟超时
+            )
+
+            if human_input is None:
+                self.chat.say("协作超时，退出协作模式。", "info")
+                break
+
+            if human_input.strip().lower() in ("done", "结束", "exit", "quit"):
+                self.chat.say("退出协作排查模式，回到正常工作。", "success")
+                break
+
+            # 控制指令仍然可以在协作中使用
+            hl = human_input.strip().lower()
+            if hl in ("status", "pause", "resume", "stop", "freeze", "unfreeze"):
+                self._handle_human_message(human_input)
+                continue
+
+            # 加入对话历史
+            collab_history.append({"role": "human", "content": human_input})
+
+            # 构建多轮 prompt
+            history_text = ""
+            # 保留最近 10 轮避免 token 爆炸
+            recent_rounds = collab_history[-20:]
+            for entry in recent_rounds:
+                role_label = "人类" if entry["role"] == "human" else "Agent"
+                history_text += f"\n**{role_label}**: {entry['content']}\n"
+
+            prompt = f"""## 协作排查对话历史
+{history_text}
+
+请回应人类最新的消息。如果需要执行命令，用 ```commands``` 格式输出。
+如果你有排查思路，主动分享。"""
+
+            try:
+                response = self.llm.ask(
+                    prompt, system=system, max_tokens=4096,
+                    interrupt_check=None,  # 协作模式不可中断
+                )
+            except LLMDegraded:
+                self.chat.say("LLM 不可用，退出协作模式。", "critical")
+                break
+            except Exception as e:
+                self.chat.say(f"LLM 调用出错: {e}", "warning")
+                continue
+
+            # 检查是否包含命令
+            commands = self._extract_commands(response)
+
+            if commands:
+                # 先展示 LLM 的分析
+                text_part = re.sub(
+                    r"```commands\s*\n.*?```", "", response, flags=re.DOTALL
+                ).strip()
+                if text_part:
+                    self.chat.say(text_part)
+
+                # 请求批准执行
+                cmd_list = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(commands))
+                approved = self.chat.request_approval(
+                    f"执行以下命令：\n{cmd_list}"
+                )
+                if approved:
+                    cmd_results = []
+                    for cmd in commands[:8]:
+                        self.chat.log(f"执行: {cmd}")
+                        result = self._run_cmd(cmd, timeout=30)
+                        cmd_results.append(f"$ {cmd}\n{result}")
+                    result_text = "\n".join(cmd_results)
+                    self.chat.say(f"执行结果：\n{result_text}")
+                    collab_history.append({
+                        "role": "agent",
+                        "content": f"{text_part}\n\n执行结果：\n{result_text}",
+                    })
+                else:
+                    collab_history.append({
+                        "role": "agent",
+                        "content": f"{text_part}\n（命令被人类否决）",
+                    })
+            else:
+                text = re.sub(
+                    r"```(?:text)?\s*\n?(.*?)\n?```", r"\1",
+                    response, flags=re.DOTALL,
+                ).strip()
+                self.chat.say(text or response)
+                collab_history.append({"role": "agent", "content": text or response})
 
     def _show_help(self):
         """显示帮助"""
@@ -1863,6 +2049,7 @@ class OpsAgent:
             "   unfreeze      解除紧急冻结\n"
             "   silence       查看静默中的异常指纹\n"
             "   clear silence 清空静默表,下一轮重新判断\n"
+            "   collab (协作)  进入协作排查模式(人+Agent 一起定位问题)\n"
             "   self-fix <描述> 触发一次自修复会话(修改 ops-agent 自己)\n"
             "   quit          让我下班\n"
             "   ─── 多目标 ───\n"
