@@ -559,6 +559,7 @@ class OpsAgent(
             return
 
         # ── 制定方案 + 执行 + 验证（最多重试 2 次）──
+        self._fix_verified = False
         self.mode = self.INCIDENT
         max_fix_attempts = 2
         for fix_attempt in range(1, max_fix_attempts + 1):
@@ -661,6 +662,7 @@ class OpsAgent(
                 self._clear_issue_fingerprint(
                     self.current_target.name, self.current_issue
                 )
+                self._fix_verified = True
                 break
             else:
                 self.chat.say(
@@ -693,11 +695,16 @@ class OpsAgent(
         # ── 复盘 ──
         self._reflect()
 
-        # ── 关闭 Incident + 恢复巡检 ──
+        # ── 关闭或挂起 Incident ──
         if self.current_incident:
-            self._close_incident(
-                f"自主处理完成: {summary[:60]}"
-            )
+            if self._fix_verified:
+                self._close_incident(f"已解决: {summary[:60]}")
+            else:
+                self.notebook.append_to_incident(
+                    self.current_incident,
+                    f"\n## 状态：未解决\n问题尚未修复，将在下轮巡检重新处理。\n",
+                )
+                self.limits.record_incident_end()
         self.mode = self.PATROL
         self.current_issue = ""
 

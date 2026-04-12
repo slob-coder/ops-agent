@@ -317,9 +317,6 @@ class PipelineMixin:
         # 解析 Playbook 更新指令
         self._apply_reflect_updates(response)
 
-        # 关闭 Incident
-        self._close_incident(response.split("\n")[0] if response else "已完成")
-
     def _close_incident(self, summary: str):
         """关闭并归档 Incident"""
         if self.current_incident:
