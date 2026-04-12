@@ -4,7 +4,7 @@ TrustEngine — 信任度引擎
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger("ops-agent.trust")
 
@@ -17,23 +17,55 @@ DENY = "deny"                    # 硬拒绝
 
 @dataclass
 class ActionPlan:
-    """一个待执行的动作方案"""
-    action: str          # 要执行的命令或操作描述
-    reason: str          # 为什么要这么做
-    rollback: str        # 回滚方案
-    expected: str        # 预期结果
-    trust_level: int     # 信任等级 0-4
-    verification: str    # 验证方式
+    """一个待执行的动作方案（结构化版本）
+
+    steps / rollback_steps / verify_steps 均为 list[dict]，
+    每个 dict 至少包含 "command" 键。
+
+    steps:          [{"command": "...", "purpose": "...", "wait_seconds": 0}]
+    rollback_steps: [{"command": "...", "purpose": "..."}]
+    verify_steps:   [{"command": "...", "expect": "..."}]
+    """
+    steps: list = field(default_factory=list)
+    rollback_steps: list = field(default_factory=list)
+    verify_steps: list = field(default_factory=list)
+    expected: str = ""
+    trust_level: int = 2
+    reason: str = ""
+
+    @property
+    def action(self) -> str:
+        """所有修复命令拼接（供 trust check / classify / trace 使用）"""
+        return "\n".join(s.get("command", "") for s in self.steps if s.get("command"))
+
+    @property
+    def verification(self) -> str:
+        """所有验证命令拼接"""
+        return "\n".join(s.get("command", "") for s in self.verify_steps if s.get("command"))
+
+    @property
+    def rollback(self) -> str:
+        """所有回滚命令拼接"""
+        return "\n".join(s.get("command", "") for s in self.rollback_steps if s.get("command"))
 
     def to_markdown(self) -> str:
-        return (
-            f"**动作**: {self.action}\n"
-            f"**理由**: {self.reason}\n"
-            f"**预期结果**: {self.expected}\n"
-            f"**回滚方案**: {self.rollback}\n"
-            f"**验证方式**: {self.verification}\n"
-            f"**信任等级**: L{self.trust_level}"
-        )
+        lines = [f"**理由**: {self.reason}"]
+        lines.append("**修复步骤**:")
+        for i, s in enumerate(self.steps, 1):
+            wait = s.get("wait_seconds", 0)
+            wait_hint = f" (等待 {wait}s)" if wait else ""
+            lines.append(f"  {i}. `{s.get('command', '')}` — {s.get('purpose', '')}{wait_hint}")
+        lines.append(f"**预期结果**: {self.expected}")
+        if self.rollback_steps:
+            lines.append("**回滚方案**:")
+            for s in self.rollback_steps:
+                lines.append(f"  - `{s.get('command', '')}`")
+        if self.verify_steps:
+            lines.append("**验证方法**:")
+            for s in self.verify_steps:
+                lines.append(f"  - `{s.get('command', '')}` (期望: {s.get('expect', '成功')})")
+        lines.append(f"**信任等级**: L{self.trust_level}")
+        return "\n".join(lines)
 
 
 class TrustEngine:
@@ -80,7 +112,7 @@ class TrustEngine:
         try:
             response = self.llm.ask(prompt, system=system, max_tokens=200)
             decision = self._parse_decision(response)
-            logger.info(f"Trust decision for '{action_plan.action}': {decision}")
+            logger.info(f"Trust decision for '{action_plan.action[:80]}': {decision}")
             return decision
         except Exception as e:
             logger.error(f"Trust check failed: {e}, defaulting to 'ask'")

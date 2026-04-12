@@ -3,6 +3,7 @@ LLM 输出解析 & 辅助方法 Mixin
 """
 
 import re
+import json
 import hashlib
 import logging
 from typing import Optional
@@ -13,8 +14,10 @@ logger = logging.getLogger("ops-agent")
 class ParsersMixin:
     """LLM 输出解析、命令提取、指纹计算等工具方法"""
 
+    # ─── 通用工具 ───
+
     def _extract_commands(self, text: str) -> list:
-        """从 LLM 输出中提取命令列表"""
+        """从 LLM 输出中提取命令列表（observe/assess/reflect 仍在用）"""
         commands = []
 
         # 匹配 ```commands ... ``` 块
@@ -31,6 +34,38 @@ class ParsersMixin:
                 commands.append(match.group(1).strip())
 
         return commands
+
+    def _extract_json(self, response: str) -> Optional[dict]:
+        """从 LLM 回复中提取 JSON 对象。
+
+        优先匹配 ```json 代码块，fallback 到整个文本 json.loads，
+        最后尝试最外层 { ... }。
+        """
+        # 尝试 ```json ... ``` 块
+        match = re.search(r'```json\s*\n(.*?)```', response, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+        # 尝试整个文本
+        try:
+            return json.loads(response.strip())
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试找 { ... } 最外层
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    # ─── assess 解析（不变，assess prompt 仍然是文本格式）───
 
     def _parse_assessment(self, response: str) -> dict:
         """解析 assess 的输出"""
@@ -53,82 +88,184 @@ class ParsersMixin:
                 result["next_step"] = line.split(":", 1)[1].strip()
         return result
 
+    # ─── diagnose 解析（JSON）───
+
     def _parse_diagnosis(self, response: str) -> dict:
-        """解析 diagnose 的输出"""
-        result = {
-            "facts": "",
-            "hypothesis": "",
-            "confidence": 60,
-            "gaps": "",
-            "escalate": "NO",
-            "type": "unknown",
+        """解析 diagnose 输出 — 要求 JSON 格式"""
+        valid_types = {"code_bug", "runtime", "config", "resource", "external", "unknown"}
+        valid_actions = {"FIX", "COLLECT_MORE", "MONITOR", "ESCALATE"}
+
+        data = self._extract_json(response)
+        if not data or "hypothesis" not in data:
+            logger.error("diagnose 输出不是合法 JSON，使用默认值")
+            return {
+                "facts": response[:500],
+                "hypothesis": "JSON 解析失败，无法提取诊断",
+                "confidence": 30,
+                "type": "unknown",
+                "next_action": "COLLECT_MORE",
+                "gaps": [],
+                "escalate": False,
+            }
+
+        # 规范化 gaps：确保是 list[dict]
+        gaps = data.get("gaps", [])
+        if not isinstance(gaps, list):
+            gaps = []
+        normalized_gaps = []
+        for g in gaps:
+            if isinstance(g, dict):
+                normalized_gaps.append(g)
+            elif isinstance(g, str):
+                normalized_gaps.append({"description": g, "command": ""})
+
+        next_action = data.get("next_action", "FIX")
+        if next_action not in valid_actions:
+            next_action = "FIX"
+
+        dtype = data.get("type", "unknown")
+        if dtype not in valid_types:
+            dtype = "unknown"
+
+        escalate = data.get("escalate", False)
+        if isinstance(escalate, str):
+            escalate = escalate.upper() in ("YES", "TRUE")
+
+        return {
+            "facts": data.get("facts", ""),
+            "hypothesis": data.get("hypothesis", ""),
+            "confidence": int(data.get("confidence", 60)),
+            "type": dtype,
+            "next_action": next_action,
+            "gaps": normalized_gaps,
+            "escalate": escalate,
         }
 
-        valid_types = {"code_bug", "runtime", "config", "resource", "external", "unknown"}
-
-        sections = re.split(r"###?\s+", response)
-        for section in sections:
-            lower = section.lower()
-            if "现象" in lower or "fact" in lower:
-                result["facts"] = section.strip()
-            elif "假设" in lower or "hypothesis" in lower:
-                result["hypothesis"] = section.strip()
-            elif "把握" in lower or "confidence" in lower:
-                match = re.search(r"(\d+)\s*%", section)
-                if match:
-                    result["confidence"] = int(match.group(1))
-                result["confidence_text"] = section.strip()
-            elif "缺失" in lower or "gap" in lower:
-                result["gaps"] = section.strip()
-            elif "人类" in lower or "escalate" in lower:
-                result["escalate"] = "YES" if "YES" in section.upper() else "NO"
-            elif "类型" in lower or section.lstrip().lower().startswith("type"):
-                # 抓第一个出现的合法关键词
-                for vt in valid_types:
-                    if re.search(rf"\b{vt}\b", section):
-                        result["type"] = vt
-                        break
-
-        return result
+    # ─── plan 解析（JSON）───
 
     def _parse_plan(self, response: str) -> Optional["ActionPlan"]:
-        """解析 plan 的输出为 ActionPlan"""
+        """解析 plan 输出 — 要求 JSON 格式"""
         from trust import ActionPlan
 
-        # 提取步骤
-        steps = self._extract_commands(response)
-        action = "\n".join(steps) if steps else response[:500]
-
-        # 提取各部分
-        rollback = ""
-        verification = ""
-        trust_level = 2
-        expected = ""
-
-        for section in re.split(r"###?\s+", response):
-            lower = section.lower()
-            if "回滚" in lower or "rollback" in lower:
-                rollback = section.strip()
-            elif "验证" in lower or "verif" in lower:
-                verification = section.strip()
-            elif "信任" in lower or "trust" in lower:
-                match = re.search(r"L(\d)", section)
-                if match:
-                    trust_level = int(match.group(1))
-            elif "预期" in lower or "expect" in lower:
-                expected = section.strip()
-
-        if not action.strip():
+        data = self._extract_json(response)
+        if not data or "steps" not in data:
+            logger.error("plan 输出不是合法 JSON")
             return None
 
+        steps = data.get("steps", [])
+        if not isinstance(steps, list) or not steps:
+            return None
+
+        # 规范化 steps
+        normalized_steps = []
+        for s in steps:
+            if isinstance(s, dict) and s.get("command"):
+                normalized_steps.append({
+                    "command": s["command"],
+                    "purpose": s.get("purpose", ""),
+                    "wait_seconds": int(s.get("wait_seconds", 0)),
+                })
+            elif isinstance(s, str) and s.strip():
+                normalized_steps.append({"command": s.strip(), "purpose": "", "wait_seconds": 0})
+
+        if not normalized_steps:
+            return None
+
+        # 规范化 rollback_steps
+        rollback = []
+        for s in data.get("rollback_steps", []):
+            if isinstance(s, dict) and s.get("command"):
+                rollback.append({"command": s["command"], "purpose": s.get("purpose", "")})
+            elif isinstance(s, str) and s.strip():
+                rollback.append({"command": s.strip(), "purpose": ""})
+
+        # 规范化 verify_steps
+        verify = []
+        for s in data.get("verify_steps", []):
+            if isinstance(s, dict) and s.get("command"):
+                verify.append({"command": s["command"], "expect": s.get("expect", "")})
+            elif isinstance(s, str) and s.strip():
+                verify.append({"command": s.strip(), "expect": ""})
+
         return ActionPlan(
-            action=action,
-            reason=response[:200],
-            rollback=rollback or "联系人类",
-            expected=expected or "系统恢复正常",
-            trust_level=trust_level,
-            verification=verification or "检查服务状态",
+            steps=normalized_steps,
+            rollback_steps=rollback,
+            verify_steps=verify,
+            expected=data.get("expected", "系统恢复正常"),
+            trust_level=int(data.get("trust_level", 2)),
+            reason=data.get("reason", ""),
         )
+
+    # ─── targeted observe（替代 _quick_observe）───
+
+    def _targeted_observe(self, plan=None) -> str:
+        """基于 plan 的验证命令做针对性观察
+
+        优先用 plan.verify_steps → fallback LLM 动态生成 → fallback 通用命令
+        """
+        # 优先：plan 中 LLM 给出的验证命令
+        if plan and plan.verify_steps:
+            outputs = []
+            for step in plan.verify_steps[:6]:
+                cmd = step.get("command", "")
+                if cmd:
+                    result = self._run_cmd(cmd, timeout=15)
+                    outputs.append(f"$ {cmd}\n{str(result)}")
+            if outputs:
+                return "\n\n".join(outputs)
+
+        # fallback：让 LLM 基于修复上下文动态生成
+        if plan and plan.action:
+            generated = self._generate_verify_commands(plan)
+            if generated:
+                return generated
+
+        # 最终 fallback：通用命令
+        return self._quick_observe()
+
+    def _generate_verify_commands(self, plan) -> str:
+        """plan 中没有验证命令时，让 LLM 基于上下文生成"""
+        action_desc = plan.action[:500] if plan else ""
+        expected = plan.expected[:300] if plan else ""
+        prompt = (
+            f"刚刚执行了以下修复操作:\n\n"
+            f"操作:\n{action_desc}\n"
+            f"预期结果: {expected}\n"
+            f"目标: {self.current_target.name} ({self.current_target.mode})\n\n"
+            f"请生成验证命令来确认修复是否生效。\n"
+            f"要求:\n"
+            f"- 只输出只读检查命令（不修改任何东西）\n"
+            f"- 命令要能直接判断修复是否成功\n"
+            f"- 最多 4 条命令\n"
+            f"- 放在 ```commands 代码块中\n"
+        )
+        try:
+            response = self._ask_llm(prompt, max_tokens=400, phase="VERIFY_COMMANDS")
+            cmds = self._extract_commands(response)[:4]
+            if cmds:
+                outputs = []
+                for cmd in cmds:
+                    result = self._run_cmd(cmd, timeout=15)
+                    outputs.append(f"$ {cmd}\n{str(result)}")
+                return "\n\n".join(outputs)
+        except Exception:
+            pass
+        return ""
+
+    def _quick_observe(self) -> str:
+        """通用快速观察（最终 fallback）"""
+        commands = [
+            "systemctl --failed --no-pager",
+            "free -h",
+            "df -h",
+        ]
+        outputs = []
+        for cmd in commands:
+            result = self._run_cmd(cmd, timeout=10)
+            outputs.append(f"$ {cmd}\n{str(result)}")
+        return "\n\n".join(outputs)
+
+    # ─── reflect 解析（不变）───
 
     def _apply_reflect_updates(self, reflect_response: str):
         """从复盘结果中应用 Playbook 更新"""
@@ -156,6 +293,8 @@ class ParsersMixin:
             if self.notebook.exists(f"playbook/{filename}"):
                 self.notebook.append(f"playbook/{filename}", f"\n{content}")
                 self.chat.say(f"更新了 Playbook: {filename}", "success")
+
+    # ─── 辅助方法（不变）───
 
     def _classify_action(self, action_text: str) -> str:
         """从动作文本中识别动作类型(给限制引擎用)"""
@@ -187,33 +326,15 @@ class ParsersMixin:
         return ""
 
     def _issue_fingerprint(self, target_name: str, summary: str) -> str:
-        """生成异常指纹用于静默去重。
-
-        同一目标、同一症状归一化后应得到相同的指纹。
-        为了对小幅抖动鲁棒(比如错误里带时间戳/行号),我们只取
-        summary 中的字母数字字符,截断后与 target_name 拼接。
-        """
+        """生成异常指纹用于静默去重。"""
         normalized = re.sub(r"[^\w\u4e00-\u9fff]+", "", summary or "")[:120]
         raw = f"{target_name}::{normalized}"
         return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 
     def _clear_issue_fingerprint(self, target_name: str, summary: str):
-        """修复验证通过后清除指纹,允许同类问题下次复发时立刻再次触发。"""
+        """修复验证通过后清除指纹"""
         fp = self._issue_fingerprint(target_name, summary)
         self._issue_fingerprints.pop(fp, None)
-
-    def _quick_observe(self) -> str:
-        """快速观察当前状态（用于修复前后对比）"""
-        commands = [
-            "systemctl --failed --no-pager",
-            "free -h",
-            "df -h",
-        ]
-        outputs = []
-        for cmd in commands:
-            result = self._run_cmd(cmd, timeout=10)
-            outputs.append(str(result))
-        return "\n".join(outputs)
 
     def _recent_incidents_summary(self) -> str:
         """最近 Incident 摘要"""

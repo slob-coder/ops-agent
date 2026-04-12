@@ -260,36 +260,66 @@ class PipelineMixin:
         return plan
 
     def _execute(self, plan) -> str:
-        """执行修复动作"""
-        # 从 plan.action 中提取命令
-        commands = self._extract_commands(plan.action)
-        if not commands:
-            # 尝试直接执行
-            commands = [plan.action]
-
+        """执行修复动作 — 按 plan.steps 逐步执行"""
         results = []
-        for cmd in commands:
+        for i, step in enumerate(plan.steps, 1):
+            cmd = step.get("command", "")
+            purpose = step.get("purpose", "")
+            wait = step.get("wait_seconds", 0)
+
+            if not cmd:
+                continue
+
+            self.chat.trace("EXECUTE", f"STEP {i}: {cmd} ({purpose})")
             result = self._run_cmd(cmd)
-            results.append(str(result))
+            results.append(f"STEP {i}: {cmd}\n{str(result)}")
+
             if not result.success:
-                logger.warning(f"Command failed: {cmd}")
+                logger.warning(f"Step {i} failed: {cmd}")
                 break
 
-        return "\n".join(results)
+            if wait > 0:
+                self.chat.progress(f"步骤 {i} 完成，等待 {wait}s...")
+                self._interruptible_sleep(wait)
 
-    def _verify(self, plan, before: str, after: str) -> bool:
-        """验证修复结果"""
-        self.chat.progress("验证修复效果...")
-        prompt = self._fill_prompt(
-            "verify",
-            action_result=plan.action,
-            before_state=before[:2000],
-            after_state=after[:2000],
-            verification_criteria=plan.verification,
-        )
+        return "\n\n".join(results)
 
-        response = self._ask_llm(prompt, phase="VERIFY")
-        return "SUCCESS" in response.upper() and "FAILED" not in response.upper()
+    def _verify_with_retry(self, plan, before_state: str,
+                           max_retries: int = 3, interval: int = 5) -> bool:
+        """验证修复效果 — 支持多次重试"""
+        for attempt in range(1, max_retries + 1):
+            self.chat.progress(f"验证中... (第 {attempt}/{max_retries} 次)")
+            self._interruptible_sleep(interval)
+
+            after_state = self._targeted_observe(plan)
+
+            prompt = self._fill_prompt(
+                "verify",
+                action_result=plan.action,
+                before_state=before_state[:2000],
+                after_state=after_state[:2000],
+                verification_criteria=plan.verification,
+            )
+            response = self._ask_llm(prompt, phase="VERIFY")
+            passed = "SUCCESS" in response.upper() and "FAILED" not in response.upper()
+
+            self.chat.trace(
+                "VERIFY",
+                f"attempt={attempt} result={'PASS' if passed else 'FAIL'}\n{response[:500]}",
+            )
+
+            if passed:
+                return True
+
+            if attempt < max_retries:
+                self.chat.progress(f"验证未通过，{interval}s 后重试...")
+                if self.current_incident:
+                    self.notebook.append_to_incident(
+                        self.current_incident,
+                        f"\n### 验证重试 {attempt}/{max_retries}: 未通过\n",
+                    )
+
+        return False
 
     def _reflect(self):
         """复盘总结"""
@@ -324,6 +354,32 @@ class PipelineMixin:
             self.current_incident = None
             self.chat._trace_file = "patrol"  # trace 恢复到默认
             self.limits.record_incident_end()
+
+    def _collect_gap_commands(self, gaps: list) -> str:
+        """执行诊断中 gaps 列出的命令，返回收集到的输出
+
+        gaps 格式: [{"description": "...", "command": "..."}]
+        """
+        outputs = []
+        for gap in gaps[:8]:
+            cmd = gap.get("command", "")
+            if not cmd:
+                continue
+            result = self._run_cmd(cmd, timeout=15)
+            self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:1500]}")
+            outputs.append(f"$ {cmd}\n{str(result)}")
+
+        # 如果 gaps 里没有 command（只有 description），让 LLM 生成
+        if not outputs:
+            descriptions = "\n".join(g.get("description", "") for g in gaps if g.get("description"))
+            if descriptions:
+                cmds = self._generate_gap_commands(descriptions)
+                for cmd in cmds[:6]:
+                    result = self._run_cmd(cmd, timeout=15)
+                    self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:1500]}")
+                    outputs.append(f"$ {cmd}\n{str(result)}")
+
+        return "\n\n".join(outputs)
 
     def _generate_gap_commands(self, gaps_text: str) -> list:
         """根据诊断中的'缺失信息'描述，让 LLM 生成具体的收集命令"""
