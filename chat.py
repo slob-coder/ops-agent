@@ -232,7 +232,7 @@ class HumanChannel:
         """
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         entry = f"\n### [{ts}] {phase}\n{content}\n"
-        trace_dir = os.path.join(self.notebook.base_path, "trace")
+        trace_dir = os.path.join(str(self.notebook.path), "trace")
         os.makedirs(trace_dir, exist_ok=True)
 
         filename = getattr(self, '_trace_file', 'patrol') + ".md"
