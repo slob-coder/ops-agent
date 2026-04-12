@@ -314,18 +314,67 @@ class HumanInteractionMixin:
     #  协作排查模式
     # ═══════════════════════════════════════════
 
+    # 只读/信息收集类命令前缀白名单 —— CONTINUE 意图时直接执行不问人
+    _SAFE_COMMAND_PREFIXES = (
+        "cat", "tail", "head", "grep", "egrep", "fgrep", "awk", "sed -n",
+        "less", "more", "ls", "find", "stat", "file", "wc",
+        "ps", "top", "htop", "pgrep", "lsof",
+        "df", "du", "free", "uptime", "vmstat", "iostat", "mpstat",
+        "journalctl", "dmesg", "last", "who", "w",
+        "kubectl get", "kubectl describe", "kubectl logs", "kubectl top",
+        "docker ps", "docker logs", "docker inspect", "docker stats",
+        "netstat", "ss", "ip addr", "ip route", "iptables -L", "iptables -S",
+        "curl", "wget -q", "dig", "nslookup", "ping", "traceroute", "mtr",
+        "mysql -e", "psql -c", "redis-cli info", "redis-cli get",
+        "systemctl status", "systemctl is-active", "systemctl list-units",
+        "date", "hostname", "uname", "env", "printenv", "id",
+    )
+
+    # 连续自主执行轮次上限 —— 防止 LLM 跑飞
+    _MAX_AUTO_ROUNDS = 8
+
+    def _is_safe_command(self, cmd: str) -> bool:
+        """检查命令是否属于只读/信息收集类，可以不经人类确认直接执行"""
+        stripped = cmd.strip()
+        return any(stripped.startswith(p) for p in self._SAFE_COMMAND_PREFIXES)
+
+    def _parse_collab_intent(self, response: str) -> tuple:
+        """解析 LLM 回复末尾的意图标记。
+
+        Returns:
+            (intent, clean_text) — intent 为 "CONTINUE" / "CONFIRM" / "WAIT"
+        """
+        for tag in ("CONTINUE", "CONFIRM", "WAIT"):
+            pattern = rf"\[{tag}\]\s*$"
+            if re.search(pattern, response):
+                clean = re.sub(pattern, "", response).strip()
+                return tag, clean
+        # 没有标记 → 保守处理，等人类输入
+        return "WAIT", response
+
+    def _run_collab_commands(self, commands: list) -> str:
+        """批量执行命令并返回格式化结果"""
+        cmd_results = []
+        for cmd in commands[:8]:
+            self.chat.log(f"执行: {cmd}")
+            result = self._run_cmd(cmd, timeout=30)
+            cmd_results.append(f"$ {cmd}\n{result}")
+        return "\n".join(cmd_results)
+
     def _enter_collab_mode(self):
         """进入协作排查模式 —— 人类和 Agent 一起定位问题
 
-        与普通对话的区别：
-        1. 维护多轮对话历史（不是每次都无状态）
-        2. 自动加载当前 incident / 最近操作上下文
-        3. 用 ask_question 阻塞等待，不触发 interrupted
-        4. 输入 'done' / '结束' 退出协作模式
+        核心改进（相对旧版严格轮转）：
+        1. Agent 自主推进只读/信息收集操作，不每步都问人
+        2. 只在关键决策点（写操作、重启、方向不确定）暂停等人确认
+        3. LLM 通过 [CONTINUE]/[CONFIRM]/[WAIT] 意图标记控制流程
+        4. 安全阀：连续自主执行最多 _MAX_AUTO_ROUNDS 轮后强制暂停
+        5. 人类随时可以插话，Agent 会在下一轮看到
         """
         self.chat.say(
             "进入协作排查模式 🤝\n"
-            "我会保持对话上下文，你可以和我一起排查问题。\n"
+            "我会主动推进排查，只在关键决策点请你确认。\n"
+            "你随时可以插话补充信息或改变方向。\n"
             "输入 done 或 结束 退出协作模式。",
             "info",
         )
@@ -336,40 +385,70 @@ class HumanInteractionMixin:
 
         system = self._build_system_prompt()
         system += (
-            "\n\n## 协作排查模式\n"
-            "你正在和人类同事一起排查问题。保持技术讨论风格，"
-            "主动提出排查思路和需要执行的命令。"
-            "如果需要执行命令来验证假设，用 ```commands``` 格式输出。\n"
-            f"\n## 当前上下文\n{base_context}"
+            "\n\n## 协作排查模式规则\n"
+            "你正在和人类同事一起排查问题。你应该**主动推进排查**，不要每一步都问人类的想法。\n\n"
+            "### 输出格式\n"
+            "每次回复末尾必须附带一个意图标记（放在最后一行，独占一行）：\n\n"
+            "- `[CONTINUE]` — 你打算继续推进，不需要人类输入。\n"
+            "  适用于：读日志、查状态、收集信息、执行只读命令、分析中间结果\n\n"
+            "- `[CONFIRM]` — 你需要人类确认才能继续。\n"
+            "  适用于：执行写操作、重启服务、修改配置、方向性决策、你不确定的判断\n\n"
+            "- `[WAIT]` — 你已完成当前分析，等待人类提供新信息或新方向。\n"
+            "  适用于：排查到死胡同、需要人类提供业务背景、已给出结论等待反馈\n\n"
+            "### 行为原则\n"
+            "1. **大胆推进只读操作** —— 查看日志、检查进程、查看配置等不需要确认\n"
+            "2. **连续执行有关联的步骤** —— 比如查日志→发现错误→查相关服务状态→分析，一气呵成\n"
+            "3. **只在关键决策点停下** —— 要重启？要改配置？不确定方向？才用 [CONFIRM]\n"
+            "4. **每次回复保持简洁** —— 不要长篇大论解释你要做什么，直接做\n"
+            "5. **如果需要执行命令，用 ```commands``` 格式输出**\n\n"
+            f"## 当前上下文\n{base_context}"
         )
 
+        waiting_for_human = True  # 初始状态等人描述问题
+        auto_rounds = 0  # 连续自主执行轮次计数
+
         while self._running:
-            # 用 ask_question 阻塞等待人类输入（走 _approval_queue，不触发 interrupted）
-            human_input = self.chat.ask_question(
-                "请输入你的想法（输入 done 退出协作）：",
-                timeout=1800,  # 30 分钟超时
-            )
+            # ─── 等待人类输入（仅在需要时阻塞）───
+            if waiting_for_human:
+                human_input = self.chat.ask_question(
+                    "请输入你的想法（输入 done 退出协作）：",
+                    timeout=1800,  # 30 分钟超时
+                )
 
-            if human_input is None:
-                self.chat.say("协作超时，退出协作模式。", "info")
-                break
+                if human_input is None:
+                    self.chat.say("协作超时，退出协作模式。", "info")
+                    break
 
-            if human_input.strip().lower() in ("done", "结束", "exit", "quit"):
-                self.chat.say("退出协作排查模式，回到正常工作。", "success")
-                break
+                if human_input.strip().lower() in ("done", "结束", "exit", "quit"):
+                    self.chat.say("退出协作排查模式，回到正常工作。", "success")
+                    break
 
-            # 控制指令仍然可以在协作中使用
-            hl = human_input.strip().lower()
-            if hl in ("status", "pause", "resume", "stop", "freeze", "unfreeze"):
-                self._handle_human_message(human_input)
-                continue
+                # 控制指令仍然可以在协作中使用
+                hl = human_input.strip().lower()
+                if hl in ("status", "pause", "resume", "stop", "freeze", "unfreeze"):
+                    self._handle_human_message(human_input)
+                    continue
 
-            # 加入对话历史
-            collab_history.append({"role": "human", "content": human_input})
+                collab_history.append({"role": "human", "content": human_input})
+                auto_rounds = 0  # 人类说话了，重置计数
 
-            # 构建多轮 prompt
+            else:
+                # ─── Agent 自主推进时，非阻塞检查人类是否插话 ───
+                pending_msg = self.chat.check_inbox()
+                if pending_msg is not None:
+                    pl = pending_msg.strip().lower()
+                    if pl in ("done", "结束", "exit", "quit"):
+                        self.chat.say("退出协作排查模式，回到正常工作。", "success")
+                        break
+                    if pl in ("status", "pause", "resume", "stop", "freeze", "unfreeze"):
+                        self._handle_human_message(pending_msg)
+                        continue
+                    # 人类插话，纳入上下文
+                    collab_history.append({"role": "human", "content": pending_msg})
+                    auto_rounds = 0
+
+            # ─── 构建多轮 prompt ───
             history_text = ""
-            # 保留最近 10 轮避免 token 爆炸
             recent_rounds = collab_history[-20:]
             for entry in recent_rounds:
                 role_label = "人类" if entry["role"] == "human" else "Agent"
@@ -378,9 +457,10 @@ class HumanInteractionMixin:
             prompt = f"""## 协作排查对话历史
 {history_text}
 
-请回应人类最新的消息。如果需要执行命令，用 ```commands``` 格式输出。
-如果你有排查思路，主动分享。"""
+请继续排查。如果需要执行命令，用 ```commands``` 格式输出。
+回复末尾附上意图标记：[CONTINUE] / [CONFIRM] / [WAIT]"""
 
+            # ─── LLM 调用 ───
             try:
                 response = self.llm.ask(
                     prompt, system=system, max_tokens=4096,
@@ -391,48 +471,100 @@ class HumanInteractionMixin:
                 break
             except Exception as e:
                 self.chat.say(f"LLM 调用出错: {e}", "warning")
+                waiting_for_human = True
                 continue
 
-            # 检查是否包含命令
-            commands = self._extract_commands(response)
+            # ─── 解析意图标记 ───
+            intent, clean_response = self._parse_collab_intent(response)
+            commands = self._extract_commands(clean_response)
 
+            # 展示文本部分（去掉命令块）
+            text_part = re.sub(
+                r"```(?:commands|bash|shell|sh)?\s*\n.*?```", "", clean_response,
+                flags=re.DOTALL,
+            ).strip()
+            if text_part:
+                self.chat.say(text_part)
+
+            # ─── 处理命令 ───
             if commands:
-                # 先展示 LLM 的分析
-                text_part = re.sub(
-                    r"```commands\s*\n.*?```", "", response, flags=re.DOTALL
-                ).strip()
-                if text_part:
-                    self.chat.say(text_part)
+                all_safe = all(self._is_safe_command(c) for c in commands)
 
-                # 请求批准执行
-                cmd_list = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(commands))
-                approved = self.chat.request_approval(
-                    f"执行以下命令：\n{cmd_list}"
-                )
-                if approved:
-                    cmd_results = []
-                    for cmd in commands[:8]:
-                        self.chat.log(f"执行: {cmd}")
-                        result = self._run_cmd(cmd, timeout=30)
-                        cmd_results.append(f"$ {cmd}\n{result}")
-                    result_text = "\n".join(cmd_results)
+                if intent == "CONTINUE" and all_safe:
+                    # 只读命令 + CONTINUE → 直接执行，不问人
+                    result_text = self._run_collab_commands(commands)
                     self.chat.say(f"执行结果：\n{result_text}")
                     collab_history.append({
                         "role": "agent",
                         "content": f"{text_part}\n\n执行结果：\n{result_text}",
                     })
+                    waiting_for_human = False
+
+                elif intent == "CONTINUE" and not all_safe:
+                    # LLM 说 CONTINUE 但命令不安全 → 自动升级为 CONFIRM
+                    logger.info("collab: CONTINUE 含非安全命令，升级为 CONFIRM")
+                    cmd_list = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(commands))
+                    approved = self.chat.request_approval(
+                        f"执行以下命令（含写操作，需确认）：\n{cmd_list}"
+                    )
+                    if approved:
+                        result_text = self._run_collab_commands(commands)
+                        self.chat.say(f"执行结果：\n{result_text}")
+                        collab_history.append({
+                            "role": "agent",
+                            "content": f"{text_part}\n\n执行结果：\n{result_text}",
+                        })
+                        waiting_for_human = False
+                    else:
+                        collab_history.append({
+                            "role": "agent",
+                            "content": f"{text_part}\n（命令被人类否决）",
+                        })
+                        waiting_for_human = True
+
                 else:
-                    collab_history.append({
-                        "role": "agent",
-                        "content": f"{text_part}\n（命令被人类否决）",
-                    })
+                    # CONFIRM / WAIT → 请求批准
+                    cmd_list = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(commands))
+                    approved = self.chat.request_approval(
+                        f"执行以下命令：\n{cmd_list}"
+                    )
+                    if approved:
+                        result_text = self._run_collab_commands(commands)
+                        self.chat.say(f"执行结果：\n{result_text}")
+                        collab_history.append({
+                            "role": "agent",
+                            "content": f"{text_part}\n\n执行结果：\n{result_text}",
+                        })
+                        # CONFIRM 后继续推进；WAIT 则等人
+                        waiting_for_human = (intent == "WAIT")
+                    else:
+                        collab_history.append({
+                            "role": "agent",
+                            "content": f"{text_part}\n（命令被人类否决）",
+                        })
+                        waiting_for_human = True
+
             else:
-                text = re.sub(
-                    r"```(?:text)?\s*\n?(.*?)\n?```", r"\1",
-                    response, flags=re.DOTALL,
-                ).strip()
-                self.chat.say(text or response)
-                collab_history.append({"role": "agent", "content": text or response})
+                # 无命令的纯分析
+                collab_history.append({
+                    "role": "agent",
+                    "content": text_part or clean_response,
+                })
+                if intent == "CONTINUE":
+                    waiting_for_human = False
+                else:  # CONFIRM / WAIT
+                    waiting_for_human = True
+
+            # ─── 安全阀：连续自主轮次上限 ───
+            if not waiting_for_human:
+                auto_rounds += 1
+                if auto_rounds >= self._MAX_AUTO_ROUNDS:
+                    self.chat.say(
+                        f"已连续自主执行 {auto_rounds} 步，暂停等待你的确认。",
+                        "info",
+                    )
+                    waiting_for_human = True
+                    auto_rounds = 0
 
     def _show_help(self):
         """显示帮助"""
