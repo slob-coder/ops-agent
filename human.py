@@ -36,6 +36,11 @@ class HumanInteractionMixin:
             self._report_status()
             return
 
+        if lower in ("new", "clear chat", "清除对话"):
+            self._free_chat_history.clear()
+            self.chat.say("已清除自由对话上下文。", "info")
+            return
+
         if lower == "pause":
             self.paused = True
             self.chat.say("已暂停自主巡检。我会继续响应你的指令。输入 resume 恢复。", "info")
@@ -228,12 +233,24 @@ class HumanInteractionMixin:
 
         关键设计：
         1. 注入当前 incident、最近对话、当前问题等上下文，避免 LLM 说"没有上下文"
-        2. allow_interrupt=False，因为这本身就是在处理人类输入，
+        2. 维护 _free_chat_history 多轮对话上下文，支持连续追问
+        3. allow_interrupt=False，因为这本身就是在处理人类输入，
            新输入会进 inbox 在下一轮 _drain_human_messages 处理
         """
         self.chat.log("正在思考你的指令...")
 
+        # 记录人类输入到内存历史和 notebook
+        self._free_chat_history.append({"role": "human", "content": msg})
+        self.notebook.log_conversation("Human", msg)
+
+        # 构建上下文：固定上下文（incident/问题等）+ 内存中的对话历史
         context = self._build_conversation_context()
+        max_rounds = getattr(self.ctx_limits, 'max_free_chat_history_rounds', 10)
+        recent = self._free_chat_history[-max_rounds:]
+        history_text = ""
+        for entry in recent:
+            label = "人类" if entry["role"] == "human" else "Agent"
+            history_text += f"\n**{label}**: {entry['content']}\n"
 
         prompt = f"""人类同事给你发了一条消息。判断这是一个问题（要回答）还是一个任务（要执行）。
 
@@ -245,6 +262,9 @@ class HumanInteractionMixin:
 
 ## 上下文
 {context}
+
+## 对话历史
+{history_text}
 
 ## 人类的消息
 {msg}
@@ -294,13 +314,22 @@ class HumanInteractionMixin:
                 result = self._run_cmd(cmd, timeout=20)
                 cmd_results.append(str(result))
 
+            # 构建命令结果摘要
+            results_summary = "\n".join(
+                f"$ {cmd}\n{result}"
+                for cmd, result in zip(commands[:len(cmd_results)], cmd_results)
+            )
+
             followup = f"""刚才的问题是：{msg}
 
 ## 上下文
 {context}
 
+## 对话历史
+{history_text}
+
 执行了以下命令，结果如下：
-{chr(10).join(cmd_results)}
+{results_summary}
 
 请基于上下文和命令结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。"""
             try:
@@ -310,10 +339,22 @@ class HumanInteractionMixin:
             except Exception as e:
                 self.chat.say(f"LLM 调用出错: {e}", "warning")
                 return
+
+            # 记录 Agent 回复（含命令+结果+最终回答）到内存历史和 notebook
+            agent_record = f"执行命令: {', '.join(commands[:len(cmd_results)])}\n结论: {final}"
+            self._free_chat_history.append({"role": "agent", "content": agent_record})
+            self.notebook.log_conversation("Agent", agent_record)
+
             self.chat.say(final)
         else:
             text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", response, flags=re.DOTALL).strip()
-            self.chat.say(text or response)
+            reply = text or response
+
+            # 记录纯文本回复到内存历史和 notebook
+            self._free_chat_history.append({"role": "agent", "content": reply})
+            self.notebook.log_conversation("Agent", reply)
+
+            self.chat.say(reply)
 
     # ═══════════════════════════════════════════
     #  协作排查模式

@@ -96,6 +96,7 @@ class OpsAgent(
         self.mode = self.PATROL
         self.readonly = readonly
         self.paused = False
+        self._free_chat_history: list[dict] = []  # 自由对话多轮上下文
         self.current_incident = None
         self.current_issue = ""
         self._running = True
