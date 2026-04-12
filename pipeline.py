@@ -16,6 +16,7 @@ class PipelineMixin:
 
     def _observe(self) -> str:
         """感知：让 LLM 决定看什么，然后执行"""
+        self.chat.progress("分析观察目标...")
         system_map = self.notebook.read("system-map.md")
         watchlist = self.notebook.read("config/watchlist.md")
         recent = self._recent_incidents_summary()

@@ -693,7 +693,11 @@ class OpsAgent(
         # ── 复盘 ──
         self._reflect()
 
-        # ── 恢复巡检 ──
+        # ── 关闭 Incident + 恢复巡检 ──
+        if self.current_incident:
+            self._close_incident(
+                f"自主处理完成: {summary[:60]}"
+            )
         self.mode = self.PATROL
         self.current_issue = ""
 
