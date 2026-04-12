@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 import logging
+from context_limits import get_context_limits
 from dataclasses import dataclass
 from enum import Enum
 
@@ -103,7 +104,7 @@ class ProductionWatcher:
                     elapsed=self._now() - start,
                     checks=checks,
                     detail=f"检测到原异常复发: {cur_sig}",
-                    last_observation=observation[:1000],
+                    last_observation=observation[:get_context_limits().observe_output_chars],
                 )
 
             self._sleep(interval)
@@ -113,5 +114,5 @@ class ProductionWatcher:
             elapsed=self._now() - start,
             checks=checks,
             detail=f"观察 {duration}s,{checks} 次检查,无复发",
-            last_observation=last_obs[:1000],
+            last_observation=last_obs[:get_context_limits().observe_output_chars],
         )

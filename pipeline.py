@@ -39,9 +39,10 @@ class PipelineMixin:
 
         # 执行命令、收集输出
         outputs = []
-        for cmd in commands[:10]:  # 最多执行 10 条
+        max_cmds = self.limits.config.max_observe_commands
+        for cmd in commands[:max_cmds]:
             result = self._run_cmd(cmd, timeout=15)
-            self.chat.trace("OBSERVE", f"$ {cmd}\n{str(result)[:1500]}")
+            self.chat.trace("OBSERVE", f"$ {cmd}\n{str(result)[:self.ctx_limits.observe_output_chars]}")
             outputs.append(str(result))
 
         return "\n\n".join(outputs)
@@ -122,20 +123,22 @@ class PipelineMixin:
             )
 
         # 搜索相关 Playbook
-        relevant_files = self.notebook.find_relevant(summary + " " + observations[:500])
+        relevant_files = self.notebook.find_relevant(
+            summary + " " + observations[:self.ctx_limits.playbook_search_chars]
+        )
         playbook_content = ""
         for f in relevant_files:
             if "playbook" in f:
-                playbook_content += f"\n### {f}\n{self.notebook.read(f)[:1500]}\n"
+                playbook_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.playbook_content_chars]}\n"
 
         # 搜索历史 Incident
         incidents_content = ""
         for f in relevant_files:
             if "incidents" in f:
-                incidents_content += f"\n### {f}\n{self.notebook.read(f)[:1000]}\n"
+                incidents_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.incident_history_chars]}\n"
 
         # trace 记录源码上下文
-        self.chat.trace("DIAGNOSE", f"源码上下文:\n{source_text[:2000]}")
+        self.chat.trace("DIAGNOSE", f"源码上下文:\n{source_text[:self.ctx_limits.source_context_trace_chars]}")
 
         max_obs = getattr(self.limits.config, "max_observations_chars", 8000)
         prompt = self._fill_prompt(
@@ -154,7 +157,7 @@ class PipelineMixin:
         # 屏幕只显示结论
         conf = result.get("confidence", 0)
         rtype = result.get("type", "unknown")
-        hypothesis = result.get("hypothesis", "")[:80]
+        hypothesis = result.get("hypothesis", "")
         self.chat.progress(f"把握度 {conf}% | 类型: {rtype} | {hypothesis}")
 
         return result
@@ -191,7 +194,7 @@ class PipelineMixin:
         try:
             verified = self.patch_loop.run(
                 diagnosis=diagnosis,
-                locations=result.locations,
+                locations=result.locations[:self.limits.config.max_source_locations],
                 repo=repo,
                 incident_id=self.current_incident or "incident",
             )
@@ -207,8 +210,8 @@ class PipelineMixin:
                 f"- 分支: {verified.result.branch_name}\n"
                 f"- Commit: {verified.result.commit_sha[:12]}\n"
                 f"- 阶段: {verified.result.stage}\n"
-                f"- 尝试次数: {verified.attempts}/3\n"
-                f"- 修改说明: {verified.patch.description[:300]}\n"
+                f"- 尝试次数: {verified.attempts}/{self.limits.config.max_patch_attempts}\n"
+                f"- 修改说明: {verified.patch.description}\n"
                 f"- 修改文件: {', '.join(verified.patch.files_changed)}\n"
             )
             try:
@@ -255,7 +258,7 @@ class PipelineMixin:
         plan = self._parse_plan(response)
         if plan:
             self.chat.say(
-                f"方案: {plan.action[:120]}  (L{plan.trust_level})",
+                f"方案: {plan.action}  (L{plan.trust_level})",
                 "action",
             )
         return plan
@@ -297,8 +300,8 @@ class PipelineMixin:
             prompt = self._fill_prompt(
                 "verify",
                 action_result=plan.action,
-                before_state=before_state[:2000],
-                after_state=after_state[:2000],
+                before_state=before_state[:self.ctx_limits.verify_state_chars],
+                after_state=after_state[:self.ctx_limits.verify_state_chars],
                 verification_criteria=plan.verification,
             )
             response = self._ask_llm(prompt, phase="VERIFY")
@@ -306,7 +309,7 @@ class PipelineMixin:
 
             self.chat.trace(
                 "VERIFY",
-                f"attempt={attempt} result={'PASS' if passed else 'FAIL'}\n{response[:500]}",
+                f"attempt={attempt} result={'PASS' if passed else 'FAIL'}\n{response[:self.ctx_limits.verify_response_trace_chars]}",
             )
 
             if passed:
@@ -333,7 +336,7 @@ class PipelineMixin:
 
         prompt = self._fill_prompt(
             "reflect",
-            incident_record=incident_record[:4000],
+            incident_record=incident_record[:self.ctx_limits.reflect_incident_chars],
             playbook_list=playbook_list,
         )
 
@@ -370,13 +373,13 @@ class PipelineMixin:
         diag_json = ""
         try:
             import json
-            diag_json = json.dumps(diagnosis, ensure_ascii=False)[:500]
+            diag_json = json.dumps(diagnosis, ensure_ascii=False)[:self.ctx_limits.diagnosis_json_chars]
         except Exception:
-            diag_json = str(diagnosis)[:500]
+            diag_json = str(diagnosis)[:self.ctx_limits.diagnosis_json_chars]
 
         prev_part = ""
         if prev_summary:
-            prev_part = f"\n## 上轮摘要\n{prev_summary[:1000]}\n"
+            prev_part = f"\n## 上轮摘要\n{prev_summary[:self.ctx_limits.prev_summary_chars]}\n"
 
         prompt = (
             f"你是运维助手。将以下观测数据和诊断结论压缩为 {summary_budget} 字以内的关键事实摘要。\n"
@@ -399,12 +402,13 @@ class PipelineMixin:
         gaps 格式: [{"description": "...", "command": "..."}]
         """
         outputs = []
-        for gap in gaps[:8]:
+        max_gap = self.limits.config.max_gap_commands
+        for gap in gaps[:max_gap]:
             cmd = gap.get("command", "")
             if not cmd:
                 continue
             result = self._run_cmd(cmd, timeout=15)
-            self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:1500]}")
+            self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:self.ctx_limits.gap_output_trace_chars]}")
             outputs.append(f"$ {cmd}\n{str(result)}")
 
         # 如果 gaps 里没有 command（只有 description），让 LLM 生成
@@ -412,9 +416,10 @@ class PipelineMixin:
             descriptions = "\n".join(g.get("description", "") for g in gaps if g.get("description"))
             if descriptions:
                 cmds = self._generate_gap_commands(descriptions)
-                for cmd in cmds[:6]:
+                max_gen = self.limits.config.max_generated_gap_commands
+                for cmd in cmds[:max_gen]:
                     result = self._run_cmd(cmd, timeout=15)
-                    self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:1500]}")
+                    self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:self.ctx_limits.gap_output_trace_chars]}")
                     outputs.append(f"$ {cmd}\n{str(result)}")
 
         return "\n\n".join(outputs)
@@ -430,7 +435,7 @@ class PipelineMixin:
         )
         try:
             response = self._ask_llm(prompt, max_tokens=500, phase="GAP_COMMANDS")
-            return self._extract_commands(response)[:6]
+            return self._extract_commands(response)[:self.limits.config.max_generated_gap_commands]
         except Exception:
             return []
 
@@ -481,7 +486,7 @@ class PipelineMixin:
                     f"🚨 合并冲突: {branch} → {main_branch}\n"
                     f"已中止合并，fix 分支保留在本地。\n"
                     f"请手动合并: cd {repo_path} && git merge {branch}\n"
-                    f"补丁说明: {verified.patch.description[:200]}",
+                    f"补丁说明: {verified.patch.description}",
                     "critical",
                 )
                 return
@@ -506,7 +511,7 @@ class PipelineMixin:
                 f"🚨 git push 失败: {e}\n"
                 f"本地已回滚到合并前状态。\n"
                 f"fix 分支 {branch} 保留在本地，请手动推送。\n"
-                f"补丁说明: {verified.patch.description[:200]}",
+                f"补丁说明: {verified.patch.description}",
                 "critical",
             )
             return
@@ -517,12 +522,12 @@ class PipelineMixin:
             self.chat.notify(
                 f"⚠️ 代码已推送，但未配置 deploy_cmd，请手动部署。\n"
                 f"仓库: {repo_path} | commit: {commit_sha[:12]}\n"
-                f"补丁说明: {verified.patch.description[:200]}",
+                f"补丁说明: {verified.patch.description}",
                 "warning",
             )
             return
 
-        self.chat.say(f"执行部署: {deploy_cmd[:80]}", "action")
+        self.chat.say(f"执行部署: {deploy_cmd}", "action")
         try:
             self._run_cmd(deploy_cmd, timeout=300)
             self.chat.say("✓ 部署命令执行完成", "success")
@@ -549,7 +554,7 @@ class PipelineMixin:
             self.chat.notify(
                 f"✅ 自动修复成功并已部署！\n"
                 f"仓库: {repo.name} | commit: {commit_sha[:12]}\n"
-                f"补丁说明: {verified.patch.description[:200]}",
+                f"补丁说明: {verified.patch.description}",
                 "success",
             )
             try:
@@ -557,7 +562,7 @@ class PipelineMixin:
             except Exception:
                 pass
         else:
-            obs_hint = f"\n当前观察: {observations[:300]}" if observations else ""
+            obs_hint = f"\n当前观察: {observations}" if observations else ""
             self.chat.notify(
                 f"⚠️ 部署后验证发现问题，正在自动回滚...{obs_hint}",
                 "critical",

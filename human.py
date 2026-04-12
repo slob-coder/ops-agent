@@ -177,7 +177,8 @@ class HumanInteractionMixin:
             content = self._find_and_read(target)
             if content:
                 # 限长，避免刷屏
-                preview = content[:2000] + ("\n...(已截断)" if len(content) > 2000 else "")
+                limit = self.ctx_limits.show_file_preview_chars
+                preview = content[:limit] + ("\n...(已截断)" if len(content) > limit else "")
                 self.chat.say(f"{target}:\n{preview}")
             else:
                 self.chat.say(f"找不到 {target}", "warning")
@@ -206,8 +207,9 @@ class HumanInteractionMixin:
             content = self.notebook.read_incident(self.current_incident)
             if content:
                 # 截断避免超 token
-                if len(content) > 3000:
-                    content = content[:3000] + "\n...(已截断)"
+                limit = self.ctx_limits.conversation_incident_chars
+                if len(content) > limit:
+                    content = content[:limit] + "\n...(已截断)"
                 parts.append(f"## 当前 Incident 记录\n{content}")
 
         # 最近对话历史
@@ -284,7 +286,7 @@ class HumanInteractionMixin:
             self.chat.clear_interrupt()
             self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
             cmd_results = []
-            for cmd in commands[:8]:
+            for cmd in commands[:self.limits.config.max_chat_commands]:
                 if self.chat.is_interrupted():
                     self.chat.say("收到新指令，停止当前任务。", "info")
                     return
@@ -358,7 +360,7 @@ class HumanInteractionMixin:
     def _run_collab_commands(self, commands: list) -> str:
         """批量执行命令并返回格式化结果"""
         cmd_results = []
-        for cmd in commands[:8]:
+        for cmd in commands[:self.limits.config.max_chat_commands]:
             self.chat.log(f"执行: {cmd}")
             result = self._run_cmd(cmd, timeout=30)
             cmd_results.append(f"$ {cmd}\n{result}")
@@ -452,7 +454,7 @@ class HumanInteractionMixin:
 
             # ─── 构建多轮 prompt ───
             history_text = ""
-            recent_rounds = collab_history[-20:]
+            recent_rounds = collab_history[-self.limits.config.max_collab_history_rounds:]
             for entry in recent_rounds:
                 role_label = "人类" if entry["role"] == "human" else "Agent"
                 history_text += f"\n**{role_label}**: {entry['content']}\n"
@@ -661,7 +663,7 @@ class HumanInteractionMixin:
         if emergency_stop.exists():
             self.chat.say(
                 f"🚨 自修复已被冻结(EMERGENCY_STOP_SELF_MODIFY 存在)。\n"
-                f"原因:\n{emergency_stop.read_text()[:500]}\n"
+                f"原因:\n{emergency_stop.read_text()}\n"
                 f"人类确认后删除该文件可恢复。",
                 "critical"
             )

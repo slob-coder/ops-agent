@@ -346,7 +346,7 @@ class ToolBox:
             # ── 失败自动重试一次：清掉可能损坏的 master 连接后重连 ──
             if (self.target.mode == "ssh" and not cr.success and _retry == 0):
                 if self._is_connection_error(cr.stderr):
-                    logger.warning(f"SSH connection error, resetting master and retrying: {cr.stderr.strip()[:200]}")
+                    logger.warning(f"SSH connection error, resetting master and retrying: {cr.stderr.strip()}")
                     self._cleanup_ssh_master()
                     return self.run(cmd, timeout=timeout, _retry=1)
 

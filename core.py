@@ -21,6 +21,7 @@ from pr_workflow import PRWorkflowMixin
 from human import HumanInteractionMixin
 from metrics import MetricsMixin
 from parsers import ParsersMixin
+from context_limits import get_context_limits, reload_context_limits
 
 # ─── 日志配置 ───
 logging.basicConfig(
@@ -100,13 +101,14 @@ class OpsAgent(
         self._running = True
         self._prompts = {}
 
+        # ── 上下文窗口限制 ──
+        self.ctx_limits = get_context_limits(notebook_path)
+
         # ── 异常指纹静默（修复：避免异常持续存在时反复开 incident）──
         # 结构: fingerprint -> last_fired_timestamp
         self._issue_fingerprints: dict = {}
-        # 默认静默窗口 30 分钟,可被 limits.yaml 的 silence_window_seconds 覆盖
-        self._silence_window_seconds = getattr(
-            self.limits.config, "silence_window_seconds", 1800
-        )
+        # 静默窗口：优先 limits.yaml 配置
+        self._silence_window_seconds = self.limits.config.silence_window_seconds
         # 标记 _loop_once 本轮是否已经睡过,避免 run() 里再睡一次
         self._already_slept_this_loop = False
 
@@ -121,6 +123,7 @@ class OpsAgent(
                 generator=PatchGenerator(self.llm),
                 applier=PatchApplier(),
                 logger_fn=lambda msg: self.chat.log(msg) if self.chat else logger.info(msg),
+                max_attempts=self.limits.config.max_patch_attempts,
             )
         except Exception as e:
             logger.warning(f"PatchLoop init failed (Sprint 3 disabled): {e}")
@@ -216,7 +219,7 @@ class OpsAgent(
         # 把探索结果整理成文本
         explore_text = ""
         for name, result in results.items():
-            explore_text += f"\n### {name}\n```\n{result.output[:1000]}\n```\n"
+            explore_text += f"\n### {name}\n```\n{result.output[:self.ctx_limits.explore_output_chars]}\n```\n"
 
         # 让 LLM 生成 system-map
         self.chat.say("正在分析系统环境...", "info")
@@ -463,7 +466,7 @@ class OpsAgent(
 
         # 创建 Incident
         self.current_incident = self.notebook.create_incident(
-            f"{self.current_target.name}-{summary[:40]}"
+            f"{self.current_target.name}-{summary}"
         )
         # trace 文件绑定到当前 incident
         self.chat._trace_file = self.current_incident
@@ -502,11 +505,11 @@ class OpsAgent(
         fix_verified = False
         self._obs_summary = ""  # 每个 incident 重置滚动摘要
 
-        max_total_rounds = 8      # 总轮次上限（防死循环）
+        max_total_rounds = self.limits.config.max_total_rounds
         diagnose_rounds = 0       # 诊断轮次计数
         fix_attempts = 0          # 修复尝试计数
-        max_diagnose_rounds = 4   # 最多诊断 4 轮
-        max_fix_attempts = 2      # 最多修复 2 次
+        max_diagnose_rounds = self.limits.config.max_diagnose_rounds
+        max_fix_attempts = self.limits.config.max_fix_attempts
 
         for _ in range(max_total_rounds):
             # 每个状态转换前检查人类输入
@@ -522,7 +525,7 @@ class OpsAgent(
                 diagnosis = self._diagnose(assessment, observations)
 
                 conf = diagnosis.get("confidence", 0)
-                hyp = diagnosis.get("hypothesis", "")[:80]
+                hyp = diagnosis.get("hypothesis", "")
                 self.chat.progress(
                     f"诊断 (第{diagnose_rounds}轮): 把握度 {conf}% | {hyp}"
                 )
@@ -535,7 +538,7 @@ class OpsAgent(
                 self.notebook.append_to_incident(
                     self.current_incident,
                     f"\n## 诊断 (第{diagnose_rounds}轮)\n"
-                    f"- 假设: {diagnosis.get('hypothesis', '')[:200]}\n"
+                    f"- 假设: {diagnosis.get('hypothesis', '')}\n"
                     f"- 把握度: {diagnosis.get('confidence', 0)}%\n"
                     f"- 类型: {diagnosis.get('type', 'unknown')}\n"
                     f"- 决策: {next_action}\n",
@@ -578,7 +581,7 @@ class OpsAgent(
                         self.notebook.append_to_incident(
                             self.current_incident,
                             f"\n### 补充数据 (第{diagnose_rounds}轮)\n"
-                            f"```\n{extra[:2000]}\n```\n",
+                            f"```\n{extra[:self.ctx_limits.gap_output_incident_chars]}\n```\n",
                         )
                     state = "DIAGNOSE"  # 回去重新诊断
 
@@ -600,8 +603,8 @@ class OpsAgent(
                 elif next_action == "ESCALATE":
                     self.chat.notify(
                         f"⚠️ 需要人类介入:\n{summary}\n"
-                        f"诊断: {diagnosis.get('hypothesis', '')[:200]}\n"
-                        f"原因: {diagnosis.get('facts', '')[:200]}",
+                        f"诊断: {diagnosis.get('hypothesis', '')}\n"
+                        f"原因: {diagnosis.get('facts', '')}",
                         "critical",
                     )
                     self.notebook.append_to_incident(
@@ -612,7 +615,7 @@ class OpsAgent(
 
                 else:  # FIX
                     self.chat.say(
-                        f"诊断完成: {diagnosis.get('hypothesis', '')[:100]}",
+                        f"诊断完成: {diagnosis.get('hypothesis', '')}",
                         "info",
                     )
 
@@ -620,7 +623,7 @@ class OpsAgent(
                     if diagnosis.get("escalate"):
                         self.chat.notify(
                             f"⚠️ 复杂问题，我会继续尝试解决:\n{summary}\n"
-                            f"诊断: {diagnosis.get('hypothesis', '')[:80]}\n"
+                            f"诊断: {diagnosis.get('hypothesis', '')}\n"
                             f"把握度: {diagnosis.get('confidence', 0)}%\n"
                             f"如需干预请随时输入指令。",
                             "warning",
@@ -725,11 +728,11 @@ class OpsAgent(
                 self.notebook.append_to_incident(
                     self.current_incident,
                     f"\n## 执行结果 (尝试 {fix_attempts})\n"
-                    f"```\n{exec_result[:6000]}\n```\n",
+                    f"```\n{exec_result[:self.ctx_limits.exec_result_chars]}\n```\n",
                 )
                 self.chat.trace(
                     "EXECUTE",
-                    f"命令: {plan.action}\n结果:\n{exec_result[:6000]}",
+                    f"命令: {plan.action}\n结果:\n{exec_result[:self.ctx_limits.exec_result_chars]}",
                 )
 
                 state = "VERIFY"
@@ -767,7 +770,7 @@ class OpsAgent(
                             observations
                             + f"\n\n## 修复失败 (尝试 {fix_attempts})\n"
                             f"命令: {plan.action}\n"
-                            f"结果: {exec_result[:4000]}\n验证: 未通过"
+                            f"结果: {exec_result[:self.ctx_limits.exec_result_for_rediagnose_chars]}\n验证: 未通过"
                         )
                         self.chat.progress("验证未通过，重新诊断...")
                         state = "DIAGNOSE"
@@ -787,7 +790,7 @@ class OpsAgent(
         # ── 关闭或挂起 Incident ──
         if self.current_incident:
             if fix_verified:
-                self._close_incident(f"已解决: {summary[:60]}")
+                self._close_incident(f"已解决: {summary}")
             else:
                 self.notebook.append_to_incident(
                     self.current_incident,

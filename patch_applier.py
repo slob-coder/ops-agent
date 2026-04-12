@@ -28,6 +28,7 @@ import subprocess
 from dataclasses import dataclass
 
 from patch_generator import Patch
+from context_limits import get_context_limits
 
 logger = logging.getLogger("ops-agent.patch_applier")
 
@@ -35,9 +36,6 @@ logger = logging.getLogger("ops-agent.patch_applier")
 # 各阶段超时(秒)
 BUILD_TIMEOUT = 300
 TEST_TIMEOUT = 600
-
-# 输出截断长度(字符)
-OUTPUT_TRUNCATE = 5000
 
 
 @dataclass
@@ -55,7 +53,7 @@ class VerificationResult:
     def short_summary(self) -> str:
         if self.success:
             return f"✓ {self.stage} on {self.branch_name} ({self.commit_sha[:8]})"
-        return f"✗ {self.stage}: {self.error_message[:200]}"
+        return f"✗ {self.stage}: {self.error_message}"
 
 
 class PatchApplier:
@@ -120,7 +118,7 @@ class PatchApplier:
 
             # ── 3. commit ──
             self._run(["git", "add", "-A"], cwd=repo_path)
-            commit_msg = f"fix(agent): {patch.description[:80] or 'auto-generated patch'}"
+            commit_msg = f"fix(agent): {patch.description or 'auto-generated patch'}"
             rc, out = self._run(
                 ["git", "-c", "user.email=ops-agent@local",
                  "-c", "user.name=OpsAgent",
@@ -132,7 +130,7 @@ class PatchApplier:
                 return VerificationResult(
                     success=False, stage="failed-at-commit",
                     apply_output=self._truncate(apply_out + "\n" + out),
-                    error_message=f"git commit failed: {out[:200]}",
+                    error_message=f"git commit failed: {out}",
                 )
             commit_sha = self._head_sha(repo_path)
 
@@ -258,10 +256,11 @@ class PatchApplier:
     def _truncate(text: str) -> str:
         if not text:
             return ""
-        if len(text) <= OUTPUT_TRUNCATE:
+        limit = get_context_limits().patch_output_truncate_chars
+        if len(text) <= limit:
             return text
-        head = OUTPUT_TRUNCATE // 4
-        tail = OUTPUT_TRUNCATE - head
+        head = limit // 4
+        tail = limit - head
         return text[:head] + "\n... [truncated] ...\n" + text[-tail:]
 
     @staticmethod

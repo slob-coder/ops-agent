@@ -13,6 +13,7 @@ patch_loop — 补丁生成 / 应用 / 验证的重试循环
 from __future__ import annotations
 
 import logging
+from context_limits import get_context_limits as _ctx
 from dataclasses import dataclass
 
 from patch_generator import PatchGenerator, Patch
@@ -29,12 +30,12 @@ class VerifiedPatch:
 
 
 class PatchLoop:
-    MAX_ATTEMPTS = 3
 
     def __init__(self, generator: PatchGenerator, applier: PatchApplier,
-                 logger_fn=None):
+                 logger_fn=None, max_attempts: int = 3):
         self.generator = generator
         self.applier = applier
+        self.max_attempts = max_attempts
         self._log = logger_fn or (lambda msg: logger.info(msg))
 
     def run(self, diagnosis: dict, locations: list,
@@ -51,8 +52,8 @@ class PatchLoop:
         last_result: VerificationResult | None = None
         last_patch: Patch | None = None
 
-        for attempt in range(1, self.MAX_ATTEMPTS + 1):
-            self._log(f"补丁尝试 #{attempt}/{self.MAX_ATTEMPTS}")
+        for attempt in range(1, self.max_attempts + 1):
+            self._log(f"补丁尝试 #{attempt}/{self.max_attempts}")
 
             patch = self.generator.generate(
                 diagnosis, locations, repo, retry_context=retry_context,
@@ -70,7 +71,7 @@ class PatchLoop:
                 self._log(f"  ↳ ✓ 通过 ({result.stage}) 分支={result.branch_name}")
                 return VerifiedPatch(patch=patch, result=result, attempts=attempt)
 
-            self._log(f"  ↳ ✗ 失败于 {result.stage}: {result.error_message[:120]}")
+            self._log(f"  ↳ ✗ 失败于 {result.stage}: {result.error_message}")
             retry_context = self._build_retry_context(patch, result)
 
         # 三次都失败
@@ -102,13 +103,13 @@ class PatchLoop:
             "",
             "上次的 diff:",
             "```diff",
-            patch.diff[:2000],
+            patch.diff[:_ctx().self_repair_output_tail_chars],
             "```",
         ]
         if result.build_output:
-            parts += ["", "构建输出(末尾):", "```", result.build_output[-2000:], "```"]
+            parts += ["", "构建输出(末尾):", "```", result.build_output[-_ctx().self_repair_output_tail_chars:], "```"]
         if result.test_output:
-            parts += ["", "测试输出(末尾):", "```", result.test_output[-2000:], "```"]
+            parts += ["", "测试输出(末尾):", "```", result.test_output[-_ctx().self_repair_output_tail_chars:], "```"]
         if result.apply_output and not (result.build_output or result.test_output):
-            parts += ["", "apply 输出:", "```", result.apply_output[-2000:], "```"]
+            parts += ["", "apply 输出:", "```", result.apply_output[-_ctx().self_repair_output_tail_chars:], "```"]
         return "\n".join(parts)

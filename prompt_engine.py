@@ -140,7 +140,7 @@ class PromptsMixin:
         if phase:
             self.chat.trace(
                 f"{phase} [REQUEST]",
-                f"```\n{prompt[:3000]}\n```",
+                f"```\n{prompt}\n```",
             )
 
         system = self._build_system_prompt()
@@ -154,7 +154,7 @@ class PromptsMixin:
         if phase:
             self.chat.trace(
                 f"{phase} [RESPONSE]",
-                f"```\n{response[:3000]}\n```",
+                f"```\n{response}\n```",
             )
 
         return response

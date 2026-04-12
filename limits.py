@@ -53,6 +53,25 @@ class LimitsConfig:
     # 诊断上下文: observations 传入 LLM 的最大字符数
     max_observations_chars: int = 8000
 
+    # ── 流程控制上限 ──
+    max_total_rounds: int = 8
+    max_diagnose_rounds: int = 4
+    max_fix_attempts: int = 2
+    silence_window_seconds: int = 1800
+
+    # ── 命令数量限制 ──
+    max_observe_commands: int = 10
+    max_verify_steps: int = 6
+    max_quick_observe_commands: int = 4
+    max_gap_commands: int = 8
+    max_generated_gap_commands: int = 6
+    max_chat_commands: int = 8
+    max_collab_history_rounds: int = 20
+    max_recent_incidents: int = 5
+    max_patch_attempts: int = 3
+    max_source_locations: int = 5
+    max_unresolved_frames: int = 5
+
     # 总开关
     enabled: bool = True
 

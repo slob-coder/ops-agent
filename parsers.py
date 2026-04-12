@@ -99,7 +99,7 @@ class ParsersMixin:
         if not data or "hypothesis" not in data:
             logger.error("diagnose 输出不是合法 JSON，使用默认值")
             return {
-                "facts": response[:500],
+                "facts": response,
                 "hypothesis": "JSON 解析失败，无法提取诊断",
                 "confidence": 30,
                 "type": "unknown",
@@ -206,7 +206,7 @@ class ParsersMixin:
         # 优先：plan 中 LLM 给出的验证命令
         if plan and plan.verify_steps:
             outputs = []
-            for step in plan.verify_steps[:6]:
+            for step in plan.verify_steps[:self.limits.config.max_verify_steps]:
                 cmd = step.get("command", "")
                 if cmd:
                     result = self._run_cmd(cmd, timeout=15)
@@ -225,8 +225,8 @@ class ParsersMixin:
 
     def _generate_verify_commands(self, plan) -> str:
         """plan 中没有验证命令时，让 LLM 基于上下文生成"""
-        action_desc = plan.action[:500] if plan else ""
-        expected = plan.expected[:300] if plan else ""
+        action_desc = plan.action[:self.ctx_limits.verify_action_desc_chars] if plan else ""
+        expected = plan.expected[:self.ctx_limits.verify_expected_chars] if plan else ""
         prompt = (
             f"刚刚执行了以下修复操作:\n\n"
             f"操作:\n{action_desc}\n"
@@ -241,7 +241,7 @@ class ParsersMixin:
         )
         try:
             response = self._ask_llm(prompt, max_tokens=400, phase="VERIFY_COMMANDS")
-            cmds = self._extract_commands(response)[:4]
+            cmds = self._extract_commands(response)[:self.limits.config.max_quick_observe_commands]
             if cmds:
                 outputs = []
                 for cmd in cmds:
@@ -338,7 +338,7 @@ class ParsersMixin:
 
     def _recent_incidents_summary(self) -> str:
         """最近 Incident 摘要"""
-        files = self.notebook.list_dir("incidents/archive")[-5:]  # 最近 5 个
+        files = self.notebook.list_dir("incidents/archive")[-self.limits.config.max_recent_incidents:]
         if not files:
             return "（暂无历史 Incident）"
         summaries = []

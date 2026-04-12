@@ -54,7 +54,7 @@ class RevertGenerator:
         rc, out = self._run(["git", "checkout", base_branch], cwd=repo_path)
         if rc != 0:
             return RevertResult(success=False, stage="checkout",
-                                error=f"checkout {base_branch} failed: {out[:200]}")
+                                error=f"checkout {base_branch} failed: {out}")
 
         # 2. pull(失败不中止,本地可能没有 remote)
         self._run(["git", "pull", "--ff-only"], cwd=repo_path)
@@ -63,7 +63,7 @@ class RevertGenerator:
         rc, out = self._run(["git", "checkout", "-b", revert_branch], cwd=repo_path)
         if rc != 0:
             return RevertResult(success=False, stage="branch",
-                                error=f"branch failed: {out[:200]}")
+                                error=f"branch failed: {out}")
 
         # 4. revert
         rc, out = self._run(
@@ -78,7 +78,7 @@ class RevertGenerator:
             self._run(["git", "checkout", base_branch], cwd=repo_path)
             self._run(["git", "branch", "-D", revert_branch], cwd=repo_path)
             return RevertResult(success=False, stage="revert",
-                                error=f"git revert failed: {out[:200]}",
+                                error=f"git revert failed: {out}",
                                 revert_branch=revert_branch)
 
         # 5. push
@@ -87,7 +87,7 @@ class RevertGenerator:
             # 本地 revert 已成功,但推送失败 — 仍然返回部分成功信息
             return RevertResult(success=False, stage="push",
                                 revert_branch=revert_branch,
-                                error=f"push failed: {push_out[:200]}")
+                                error=f"push failed: {push_out}")
 
         # 6. 创建 PR
         title = f"revert: auto-revert {commit_sha[:8]} (recurrence detected)"
@@ -107,7 +107,7 @@ class RevertGenerator:
             return RevertResult(success=False, stage="merge",
                                 revert_branch=revert_branch,
                                 pr=pr_result.pr,
-                                error=f"merge failed: {merge_out[:200]}")
+                                error=f"merge failed: {merge_out}")
 
         return RevertResult(
             success=True, stage="merge",

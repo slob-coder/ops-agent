@@ -66,8 +66,8 @@ class PRWorkflowMixin:
         self.chat.say(f"推送分支 {branch} 到远端...", "info")
         ok, push_out = host.push_branch(repo_path, branch)
         if not ok:
-            self._note(f"push 失败,降级等人类: {push_out[:200]}")
-            self.chat.say(f"🚨 git push 失败，需要人类检查。\n详情：{push_out[:300]}", "critical")
+            self._note(f"push 失败,降级等人类: {push_out}")
+            self.chat.say(f"🚨 git push 失败，需要人类检查。\n详情：{push_out}", "critical")
             return
 
         # 3. 创建 PR
@@ -76,8 +76,8 @@ class PRWorkflowMixin:
         pr_result = host.create_pr(repo_path, branch, repo.base_branch or "main",
                                    title, body)
         if not pr_result.success:
-            self._note(f"创建 PR 失败: {pr_result.error[:200]}")
-            self.chat.say(f"🚨 create_pr 失败，需要人类检查。\n详情：{pr_result.error[:300]}", "critical")
+            self._note(f"创建 PR 失败: {pr_result.error}")
+            self.chat.say(f"🚨 create_pr 失败，需要人类检查。\n详情：{pr_result.error}", "critical")
             return
         pr = pr_result.pr
         self.chat.say(f"✓ PR 已创建: {pr.url}", "success")
@@ -93,7 +93,7 @@ class PRWorkflowMixin:
         # 5. 合并
         ok, merge_out = host.merge_pr(repo_path, pr.number)
         if not ok:
-            self._note(f"merge 失败(可能被分支保护): {merge_out[:200]}")
+            self._note(f"merge 失败(可能被分支保护): {merge_out}")
             self.chat.say("merge 被拒绝(可能是分支保护),已留 PR 等人类 review", "warning")
             return
         self.limits.record_auto_merge()

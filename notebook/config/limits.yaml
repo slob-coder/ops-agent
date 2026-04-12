@@ -44,3 +44,66 @@ max_collab_auto_rounds: 30
 # 传入 LLM 诊断 prompt 的 observations 最大字符数
 # 过小会导致 COLLECT_MORE 补充数据被截断,造成死循环
 max_observations_chars: 8000
+
+# ═══════════════════════════════════════════════════════════════
+# 流程控制上限
+# ═══════════════════════════════════════════════════════════════
+#
+# 这些是 Incident 状态机的安全阀,防止 Agent 陷入无限循环。
+# 不同于动作频率限制(限制速率),这些控制的是单次 Incident 的处理深度。
+
+# ── Incident 状态机 ──
+
+# incident_loop 总轮次上限(含 diagnose + fix 所有阶段)
+# 超过后强制退出当前 Incident
+max_total_rounds: 8
+
+# 诊断阶段最大轮次(COLLECT_MORE 循环的上限)
+# 超过后放弃继续收集信息,直接尝试修复
+max_diagnose_rounds: 4
+
+# 修复最大尝试次数(PLAN→EXECUTE→VERIFY 循环的上限)
+# 超过后放弃自动修复,通知人类
+max_fix_attempts: 2
+
+# ── 异常静默窗口 ──
+
+# 同一异常指纹的静默时间(秒),默认 1800 = 30 分钟
+# 在此窗口内同一异常不会重复触发 Incident
+# 设为 0 则不静默(每次都触发),不建议
+silence_window_seconds: 1800
+
+# ── 观测命令数量限制 ──
+
+# observe 阶段每轮最多执行的命令数
+max_observe_commands: 10
+
+# verify_steps 最多执行的步骤数
+max_verify_steps: 6
+
+# _quick_observe 返回的最大命令数
+max_quick_observe_commands: 4
+
+# gap collection 每轮最大命令数
+max_gap_commands: 8
+
+# LLM 生成的 gap 补充命令最大条数
+max_generated_gap_commands: 6
+
+# 自由对话/协作模式单轮最多执行的命令数
+max_chat_commands: 8
+
+# 协作模式保留的最近对话轮数
+max_collab_history_rounds: 20
+
+# 历史 Incident 摘要查看的最大条数
+max_recent_incidents: 5
+
+# 补丁生成最大尝试次数(patch_loop)
+max_patch_attempts: 3
+
+# 源码定位最多处理的栈帧数
+max_source_locations: 5
+
+# 未解析栈帧展示上限
+max_unresolved_frames: 5

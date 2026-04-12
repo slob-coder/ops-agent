@@ -155,7 +155,7 @@ class PatchGenerator:
         if not locations:
             return "(无)"
         parts = []
-        for loc in locations[:5]:
+        for loc in locations[:5]:  # 受 limits.yaml max_source_locations 控制,由调用方截断
             parts.append(loc.render() if hasattr(loc, "render") else str(loc))
         return "\n\n".join(parts)
 

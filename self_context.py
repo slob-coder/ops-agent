@@ -13,13 +13,9 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("ops-agent.self_context")
+from context_limits import get_context_limits as _get_ctx
 
-# 单字段长度上限(字符)
-MAX_LOG_CHARS = 8000
-MAX_TREE_ENTRIES = 200
-MAX_INCIDENT_CHARS = 3000
-MAX_CONFIG_CHARS = 4000
+logger = logging.getLogger("ops-agent.self_context")
 
 
 @dataclass
@@ -59,8 +55,8 @@ class SelfContext:
             user_description=description.strip(),
             source_tree=_list_source_tree(repo_path),
             agent_state=_sanitize_state(agent_state),
-            recent_log_tail=_truncate(recent_log_tail, MAX_LOG_CHARS),
-            recent_incidents=_truncate(recent_incidents, MAX_INCIDENT_CHARS),
+            recent_log_tail=_truncate(recent_log_tail, _get_ctx().self_repair_log_chars),
+            recent_incidents=_truncate(recent_incidents, _get_ctx().self_repair_incident_chars),
             config_snapshot=_read_config_snapshot(repo_path),
             git_head=_git_head(repo_path),
             repo_path=repo_path,
@@ -84,7 +80,7 @@ class SelfContext:
         parts.append("```")
         shown = 0
         for relpath, lineno in self.source_tree:
-            if shown >= MAX_TREE_ENTRIES:
+            if shown >= _get_ctx().self_repair_tree_entries:
                 parts.append(f"... (另外 {len(self.source_tree) - shown} 个文件省略)")
                 break
             parts.append(f"{lineno:>6}  {relpath}")
@@ -96,7 +92,7 @@ class SelfContext:
         parts.append("```json")
         try:
             parts.append(json.dumps(self.agent_state, ensure_ascii=False,
-                                    indent=2, default=str)[:3000])
+                                    indent=2, default=str)[:_get_ctx().self_repair_state_dump_chars])
         except Exception as e:
             parts.append(f"(无法序列化: {e})")
         parts.append("```")
@@ -104,7 +100,7 @@ class SelfContext:
 
         if self.config_snapshot:
             parts.append("## 配置快照")
-            remaining = MAX_CONFIG_CHARS
+            remaining = _get_ctx().self_repair_config_chars
             for name, content in self.config_snapshot.items():
                 if remaining <= 0:
                     break

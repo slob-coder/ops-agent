@@ -159,7 +159,7 @@ class LLMClient:
         """
         client = self._get_client()
 
-        logger.debug(f"LLM request ({self.provider}/{self.model}): {prompt[:100]}...")
+        logger.debug(f"LLM request ({self.provider}/{self.model}): {prompt}...")
 
         try:
             if self.provider == "anthropic":
@@ -207,7 +207,7 @@ class LLMClient:
                         raise LLMInterrupted("被人类中断")
                 text = "".join(text_parts)
 
-            logger.debug(f"LLM response: {text[:200]}...")
+            logger.debug(f"LLM response: {text}...")
             return text
 
         except LLMInterrupted:

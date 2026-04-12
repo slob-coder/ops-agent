@@ -1,0 +1,139 @@
+# ═══════════════════════════════════════════════════════════════
+# OpsAgent 上下文窗口限制
+# ═══════════════════════════════════════════════════════════════
+#
+# 控制传入 LLM 的各类文本的最大字符数。
+# 这些值直接影响 LLM 的"视野"——设得太小会丢失关键信息导致误判，
+# 设得太大会浪费 token 预算并可能超出上下文窗口。
+#
+# 修改后无需重启，Agent 在下一次主循环自动重新加载。
+#
+# 建议：如果你使用大上下文模型 (128k+)，可以适当调大；
+#       如果 token 预算紧张，可以适当调小。
+# ═══════════════════════════════════════════════════════════════
+
+# ── 入职探索 ──
+
+# 入职阶段每条探索命令输出的最大字符数
+# 用于首次运行时 Agent 了解系统环境
+# 过小可能遗漏关键服务信息；过大则浪费 token
+explore_output_chars: 1000
+
+# ── 观测阶段 (observe) ──
+
+# 每条 observe 命令输出的最大字符数（trace 记录用）
+# 影响 trace 日志的详细程度和后续 assess/diagnose 的输入质量
+observe_output_chars: 1500
+
+# 传入 LLM 诊断 prompt 的 observations 最大字符数
+# 这是最关键的上下文窗口——所有观测数据通过此限制传给 LLM
+# 过小会导致 COLLECT_MORE 补充数据被截断，造成诊断死循环
+# 注意：此值同时存在于 limits.yaml (max_observations_chars)，
+#       如果两边都配置了，取 limits.yaml 的值（向后兼容）
+max_observations_chars: 8000
+
+# ── 诊断阶段 (diagnose) ──
+
+# 搜索 Playbook 时传入 observations 的字符数（用于相关性匹配）
+# 只影响搜索精度，不影响最终诊断
+playbook_search_chars: 500
+
+# 每个匹配到的 Playbook 文件内容最大字符数
+# 历史经验太长会分散 LLM 注意力
+playbook_content_chars: 1500
+
+# 每个匹配到的历史 Incident 文件内容最大字符数
+incident_history_chars: 1000
+
+# 源码上下文 trace 记录的最大字符数
+source_context_trace_chars: 2000
+
+# 诊断 JSON 摘要传入 plan prompt 的最大字符数
+# 在 _summarize_observations 中用于压缩历史诊断结论
+diagnosis_json_chars: 500
+
+# 上轮观测摘要的最大字符数（多轮 COLLECT_MORE 时的历史压缩）
+prev_summary_chars: 1000
+
+# ── 补充收集阶段 (gap collection) ──
+
+# COLLECT_MORE 路径中，每条 gap 命令输出写入 incident 笔记的最大字符数
+gap_output_incident_chars: 2000
+
+# gap 调查命令输出的 trace 记录最大字符数
+gap_output_trace_chars: 1500
+
+# ── 计划阶段 (plan) ──
+
+# _generate_verify_commands 中传入 LLM 的 action 描述最大字符数
+verify_action_desc_chars: 500
+
+# _generate_verify_commands 中传入 LLM 的 expected 结果最大字符数
+verify_expected_chars: 300
+
+# ── 执行阶段 (execute) ──
+
+# 执行结果写入 incident 笔记和 trace 的最大字符数
+# 这是 LLM 看到的修复输出——太短可能漏掉错误信息
+exec_result_chars: 6000
+
+# 验证失败时，执行结果回传 observations 的最大字符数
+# 作为重新诊断的输入
+exec_result_for_rediagnose_chars: 4000
+
+# ── 验证阶段 (verify) ──
+
+# 验证 prompt 中 before_state / after_state 的最大字符数
+verify_state_chars: 2000
+
+# 验证响应 trace 记录的最大字符数
+verify_response_trace_chars: 500
+
+# ── 复盘阶段 (reflect) ──
+
+# 复盘 prompt 中 incident_record 的最大字符数
+reflect_incident_chars: 4000
+
+# ── 源码定位 ──
+
+# SourceLocation.render() 单个位置渲染的最大字符数
+source_location_render_chars: 2000
+
+# _extract_indent_function / _extract_brace_function 返回代码片段的最大字符数
+source_function_snippet_chars: 4000
+
+# ── 自修复上下文 (self_context) ──
+
+# 自修复时收集的最近日志尾部最大字符数
+self_repair_log_chars: 8000
+
+# 自修复时收集的源码树最大条目数
+self_repair_tree_entries: 200
+
+# 自修复时收集的最近 incident 上下文最大字符数
+self_repair_incident_chars: 3000
+
+# 自修复时收集的配置快照最大字符数
+self_repair_config_chars: 4000
+
+# 自修复 JSON state dump 的最大字符数
+self_repair_state_dump_chars: 3000
+
+# ── 补丁应用 (patch_applier) ──
+
+# apply/build/test 命令输出的截断上限
+# 使用 head+tail 策略：前 1/4 + 后 3/4，中间省略
+patch_output_truncate_chars: 5000
+
+# ── 人类交互 ──
+
+# show 命令预览文件的最大字符数
+show_file_preview_chars: 2000
+
+# 对话上下文中 incident 记录的最大字符数
+conversation_incident_chars: 3000
+
+# ── 自修复输出 ──
+
+# self_repair 中测试/构建输出尾部的最大字符数
+self_repair_output_tail_chars: 1500

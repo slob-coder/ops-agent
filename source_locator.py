@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 from stack_parser import StackFrame
 from targets import SourceRepo
+from context_limits import get_context_limits
 
 logger = logging.getLogger("ops-agent.source_locator")
 
@@ -49,8 +50,10 @@ class SourceLocation:
     function_definition: str = ""  # 包含目标行的完整函数(尽力而为)
     start_line: int = 1            # context_before 起始行号(1-based)
 
-    def render(self, max_chars: int = 2000) -> str:
+    def render(self, max_chars: int = 0) -> str:
         """渲染成人类/LLM 友好的文本块"""
+        if max_chars <= 0:
+            max_chars = get_context_limits().source_location_render_chars
         lines = []
         lines.append(f"### {self.repo_name}:{os.path.relpath(self.local_file, start='/')}"
                      f":{self.frame.line}")
@@ -308,7 +311,7 @@ class SourceLocator:
                 end = j
                 break
         snippet = "".join(lines[start:end])
-        return snippet[:4000]
+        return snippet[:get_context_limits().source_function_snippet_chars]
 
     @staticmethod
     def _extract_brace_function(lines: list[str], target_line: int) -> str:
@@ -339,4 +342,4 @@ class SourceLocator:
                 end = j + 1
                 break
         snippet = "".join(lines[start:end])
-        return snippet[:4000]
+        return snippet[:get_context_limits().source_function_snippet_chars]

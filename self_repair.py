@@ -97,7 +97,7 @@ class SelfRepairSession:
     def run(self, description: str) -> SelfRepairResult:
         """执行一次完整的自修复会话。"""
         sid = f"selfrepair-{int(time.time())}"
-        self._audit("selfrepair_start", sid=sid, desc=description[:200])
+        self._audit("selfrepair_start", sid=sid, desc=description)
 
         # ── 0. 前置检查:selfdev 工作区是否存在且是 git 仓库 ──
         if not self._preflight():
@@ -212,7 +212,7 @@ class SelfRepairSession:
                 return SelfRepairResult(False, "PatchLoop 失败")
 
             branch = verified.result.branch_name
-            patch_desc = (verified.patch.description or "")[:500]
+            patch_desc = verified.patch.description or ""
 
             # ── 10. 再次跑一遍完整测试套(PatchLoop 可能只跑了 repo.test_cmd)──
             self.agent.chat.say(f"补丁在分支 {branch},跑最终完整测试...", "info")
