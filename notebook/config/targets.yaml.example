@@ -39,7 +39,33 @@ targets:
         language: java
         build_cmd: mvn clean compile        # 编译验证命令
         test_cmd: mvn test                  # 测试验证命令
-        deploy_signal: /opt/backend/.deploy_done  # 部署完成的信号文件(可选)
+        # ── git_host: Git 托管平台类型，决定 Agent 如何创建 PR ──
+        # 可选值: github | gitlab | noop | ""(空=禁用自动 PR)
+        #
+        # ⚠️ 必须配置！否则补丁验证通过后不会推送 PR，也不会触发部署。
+        #     repo_url 只告诉 Agent 仓库地址，git_host 才告诉它用什么平台 API。
+        #
+        # 安装与认证 (GitHub):
+        #   1. 安装 gh CLI:
+        #      Ubuntu/Debian: sudo apt install gh
+        #      macOS:         brew install gh
+        #      其他:          https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+        #   2. 认证(需要 GitHub Personal Access Token，需 repo + pull_request 权限):
+        #      gh auth login --with-token <<< "ghp_xxxxxxxxxxxxxxxxxxxx"
+        #   3. 验证: gh auth status
+        #
+        # 安装与认证 (GitLab):
+        #   1. 安装 glab CLI:
+        #      Ubuntu/Debian: sudo apt install glab
+        #      macOS:         brew install glab
+        #   2. 认证:
+        #      glab auth login --hostname gitlab.com --token "glpat-xxxxxxxxxxxx"
+        #   3. 验证: glab auth status
+        git_host: github
+        # deploy_cmd: 补丁合并后的部署命令(不走 PR 时也会执行)
+        deploy_cmd: systemctl restart backend
+        # deploy_signal: 部署完成的信号文件(可选)
+        deploy_signal: /opt/backend/.deploy_done
         # 该仓库的代码对应运行时的什么进程/服务:
         runtime_service: backend            # systemctl 服务名,用于部署后重启
         log_path: /opt/backend/logs/app.log
@@ -61,6 +87,11 @@ targets:
         language: python
         build_cmd: python -m py_compile $(find . -name "*.py")
         test_cmd: pytest -x
+        # ⚠️ 必须配置 git_host，否则补丁通过后不会推送 PR 和部署
+        # 详见上方示例 1 中的 git_host 注释(安装+认证步骤)
+        git_host: github
+        # Docker 项目推荐用 docker-compose 重建部署
+        deploy_cmd: docker-compose down && docker-compose up -d --build
         runtime_service: my-app              # docker compose 服务名
         log_path: ""                         # docker logs 自动获取
 
@@ -82,5 +113,8 @@ targets:
         language: go
         build_cmd: go build ./...
         test_cmd: go test ./...
+        # GitLab 项目用 glab CLI
+        git_host: gitlab
+        deploy_cmd: kubectl rollout restart deployment/api-gateway -n default
         runtime_service: api-gateway         # K8s deployment 名
         # K8s 模式下重启 = kubectl rollout restart
