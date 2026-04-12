@@ -126,20 +126,38 @@ class PromptsMixin:
         return "\n".join(lines)
 
     def _ask_llm(self, prompt: str, max_tokens: int = 4096,
-                 allow_interrupt: bool = True) -> str:
+                 allow_interrupt: bool = True,
+                 phase: str = "") -> str:
         """统一的 LLM 调用入口 —— 始终携带 system prompt
 
         这是整个 Agent 调用 LLM 的唯一入口。确保每次调用都：
         1. 带上 system prompt（Agent 的自我认知）
         2. 带上 user prompt（具体任务指令）
         3. 流式生成时自动检查人类中断（可被随时打断）
+        4. 如果指定了 phase，自动将 prompt/response 写入 trace 文件
         """
+        # trace: 记录请求
+        if phase:
+            self.chat.trace(
+                f"{phase} [REQUEST]",
+                f"```\n{prompt[:3000]}\n```",
+            )
+
         system = self._build_system_prompt()
         check = self._interrupt_check if allow_interrupt else None
-        return self.llm.ask(
+        response = self.llm.ask(
             prompt, system=system, max_tokens=max_tokens,
             interrupt_check=check,
         )
+
+        # trace: 记录响应
+        if phase:
+            self.chat.trace(
+                f"{phase} [RESPONSE]",
+                f"```\n{response[:3000]}\n```",
+            )
+
+        return response
 
     def _interrupt_check(self) -> bool:
         """供 LLM 流式调用和 SSH 命令使用的中断检查回调

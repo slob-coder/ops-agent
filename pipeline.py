@@ -29,7 +29,7 @@ class PipelineMixin:
             recent_incidents=recent,
         )
 
-        response = self._ask_llm(prompt)
+        response = self._ask_llm(prompt, phase="OBSERVE")
 
         # 提取命令列表
         commands = self._extract_commands(response)
@@ -40,12 +40,14 @@ class PipelineMixin:
         outputs = []
         for cmd in commands[:10]:  # 最多执行 10 条
             result = self._run_cmd(cmd, timeout=15)
+            self.chat.trace("OBSERVE", f"$ {cmd}\n{str(result)[:1500]}")
             outputs.append(str(result))
 
         return "\n\n".join(outputs)
 
     def _assess(self, observations: str) -> dict:
         """判断观察结果是否正常"""
+        self.chat.progress("评估观察结果...")
         system_map = self.notebook.read("system-map.md")
         recent = self._recent_incidents_summary()
 
@@ -56,7 +58,7 @@ class PipelineMixin:
             recent_incidents=recent,
         )
 
-        response = self._ask_llm(prompt)
+        response = self._ask_llm(prompt, phase="ASSESS")
         return self._parse_assessment(response)
 
     def _locate_source_from_text(self, text: str):
@@ -94,6 +96,7 @@ class PipelineMixin:
 
     def _diagnose(self, assessment: dict, observations: str) -> dict:
         """深度诊断"""
+        self.chat.progress("诊断中...")
         system_map = self.notebook.read("system-map.md")
         summary = assessment.get("summary", "")
 
@@ -107,8 +110,8 @@ class PipelineMixin:
         if locate_result and locate_result.locations:
             source_text = locate_result.render()
             top = locate_result.locations[0]
-            self.chat.log(
-                f"已定位异常源码: {top.repo_name}:{os.path.basename(top.local_file)}"
+            self.chat.progress(
+                f"已定位源码: {top.repo_name}:{os.path.basename(top.local_file)}"
                 f":{top.frame.line}"
             )
         elif parsed and parsed.frames:
@@ -130,6 +133,9 @@ class PipelineMixin:
             if "incidents" in f:
                 incidents_content += f"\n### {f}\n{self.notebook.read(f)[:1000]}\n"
 
+        # trace 记录源码上下文
+        self.chat.trace("DIAGNOSE", f"源码上下文:\n{source_text[:2000]}")
+
         prompt = self._fill_prompt(
             "diagnose",
             assessment=str(assessment),
@@ -140,8 +146,16 @@ class PipelineMixin:
             source_locations=source_text,
         )
 
-        response = self._ask_llm(prompt)
-        return self._parse_diagnosis(response)
+        response = self._ask_llm(prompt, phase="DIAGNOSE")
+        result = self._parse_diagnosis(response)
+
+        # 屏幕只显示结论
+        conf = result.get("confidence", 0)
+        rtype = result.get("type", "unknown")
+        hypothesis = result.get("hypothesis", "")[:80]
+        self.chat.progress(f"把握度 {conf}% | 类型: {rtype} | {hypothesis}")
+
+        return result
 
     def _maybe_run_patch_loop(self, diagnosis: dict) -> None:
         """Sprint 3: 如果诊断为 code_bug 且有源码定位,触发补丁生成 + 本地验证
@@ -217,6 +231,7 @@ class PipelineMixin:
 
     def _plan(self, diagnosis: dict):
         """制定修复方案"""
+        self.chat.progress("制定修复方案...")
         permissions = self.notebook.read("config/permissions.md")
 
         # 找匹配的 Playbook
@@ -234,8 +249,14 @@ class PipelineMixin:
             permissions=permissions,
         )
 
-        response = self._ask_llm(prompt)
-        return self._parse_plan(response)
+        response = self._ask_llm(prompt, phase="PLAN")
+        plan = self._parse_plan(response)
+        if plan:
+            self.chat.say(
+                f"方案: {plan.action[:120]}  (L{plan.trust_level})",
+                "action",
+            )
+        return plan
 
     def _execute(self, plan) -> str:
         """执行修复动作"""
@@ -257,6 +278,7 @@ class PipelineMixin:
 
     def _verify(self, plan, before: str, after: str) -> bool:
         """验证修复结果"""
+        self.chat.progress("验证修复效果...")
         prompt = self._fill_prompt(
             "verify",
             action_result=plan.action,
@@ -265,7 +287,7 @@ class PipelineMixin:
             verification_criteria=plan.verification,
         )
 
-        response = self._ask_llm(prompt)
+        response = self._ask_llm(prompt, phase="VERIFY")
         return "SUCCESS" in response.upper() and "FAILED" not in response.upper()
 
     def _reflect(self):
@@ -273,6 +295,7 @@ class PipelineMixin:
         if not self.current_incident:
             return
 
+        self.chat.progress("复盘总结...")
         incident_record = self.notebook.read(f"incidents/active/{self.current_incident}")
         playbook_list = self.notebook.read_playbooks_summary()
 
@@ -282,7 +305,7 @@ class PipelineMixin:
             playbook_list=playbook_list,
         )
 
-        response = self._ask_llm(prompt)
+        response = self._ask_llm(prompt, phase="REFLECT")
 
         # 追加复盘到 Incident
         self.notebook.append_to_incident(
@@ -301,7 +324,23 @@ class PipelineMixin:
         if self.current_incident:
             self.notebook.close_incident(self.current_incident, summary)
             self.current_incident = None
+            self.chat._trace_file = "patrol"  # trace 恢复到默认
             self.limits.record_incident_end()
+
+    def _generate_gap_commands(self, gaps_text: str) -> list:
+        """根据诊断中的'缺失信息'描述，让 LLM 生成具体的收集命令"""
+        prompt = (
+            f"以下是排查运维问题时发现缺失的信息:\n\n{gaps_text}\n\n"
+            f"目标: {self.current_target.name} ({self.current_target.mode})\n\n"
+            f"请生成具体的 shell 命令来收集这些信息。\n"
+            f"每行一条命令,放在 ```commands 代码块中。只输出只读命令(不要修改任何东西)。\n"
+            f"最多 6 条命令。"
+        )
+        try:
+            response = self._ask_llm(prompt, max_tokens=500, phase="GAP_COMMANDS")
+            return self._extract_commands(response)[:6]
+        except Exception:
+            return []
 
     def _note(self, text: str) -> None:
         """便捷:把一行文本追加到当前 incident,失败静默"""

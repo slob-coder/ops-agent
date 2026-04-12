@@ -217,6 +217,32 @@ class HumanChannel:
         with self._output_lock:
             print(formatted, flush=True)
 
+    def progress(self, message: str):
+        """轻量进度提示 — 灰色单行，告诉人类'我在干嘛'，不存对话记录"""
+        ts = datetime.now().strftime("%H:%M:%S")
+        formatted = f"{Color.GRAY}[{ts}]  ·  {message}{Color.RESET}"
+        with self._output_lock:
+            print(formatted, flush=True)
+
+    def trace(self, phase: str, content: str):
+        """详细过程记录 — 只写文件，不上屏幕
+
+        写入 notebook/trace/{incident_id}.md，按阶段追加。
+        如果没有活跃 incident，写入 notebook/trace/patrol.md。
+        """
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"\n### [{ts}] {phase}\n{content}\n"
+        trace_dir = os.path.join(self.notebook.base_path, "trace")
+        os.makedirs(trace_dir, exist_ok=True)
+
+        filename = getattr(self, '_trace_file', 'patrol') + ".md"
+        filepath = os.path.join(trace_dir, filename)
+        try:
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except OSError:
+            pass  # trace 失败不影响主流程
+
     def notify(self, message: str, urgency: str = "info"):
         """主动通知（同 say）"""
         self.say(message, urgency)

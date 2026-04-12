@@ -58,7 +58,7 @@ class ParsersMixin:
         result = {
             "facts": "",
             "hypothesis": "",
-            "confidence": 50,
+            "confidence": 60,
             "gaps": "",
             "escalate": "NO",
             "type": "unknown",

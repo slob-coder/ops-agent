@@ -463,6 +463,8 @@ class OpsAgent(
         self.current_incident = self.notebook.create_incident(
             f"{self.current_target.name}-{summary[:40]}"
         )
+        # trace 文件绑定到当前 incident
+        self.chat._trace_file = self.current_incident
         self.limits.record_incident_start()
         self.notebook.append_to_incident(
             self.current_incident,
@@ -472,147 +474,221 @@ class OpsAgent(
             f"- 原始评估：{assessment.get('details', '')}\n",
         )
 
-        # ── 诊断 ──
+        # ── 诊断（含深度调查循环）──
+        self.chat.say("🔍 进入调查模式", "observe")
         diagnosis = self._diagnose(assessment, observations)
 
         # 诊断后允许人类插话
         if self._drain_human_messages():
             return
 
-        if diagnosis.get("escalate") == "YES" or diagnosis.get("confidence", 0) < 50:
+        # ── 深度调查循环：confidence 不够就自己补充信息重新诊断 ──
+        max_investigate_rounds = 3
+        for round_i in range(max_investigate_rounds):
+            if diagnosis.get("confidence", 0) >= 50:
+                break  # 够了，继续走修复流程
+
+            gaps = diagnosis.get("gaps", "")
+            if not gaps:
+                break  # LLM 都没说缺什么信息，不必再挖
+
+            self.chat.progress(
+                f"把握度 {diagnosis.get('confidence', 0)}%，"
+                f"补充收集信息... (第 {round_i + 2} 轮)"
+            )
             self.notebook.append_to_incident(
                 self.current_incident,
-                f"\n## 升级给人类\n{diagnosis.get('hypothesis', '无法确定根因')}\n",
+                f"\n## 补充调查 (第 {round_i + 2} 轮)\n"
+                f"把握度: {diagnosis.get('confidence', 0)}%\n"
+                f"缺失信息: {gaps[:500]}\n",
             )
-            escalate_msg = f"🚨 遇到超出我能力的问题，需要你的帮助：\n{summary}"
-            if diagnosis.get("hypothesis"):
-                escalate_msg += f"\n详情：{diagnosis['hypothesis']}"
-            escalate_msg += "\n\n请给出你的处理建议（或输入 'skip' 跳过，我会继续巡检）："
-            human_advice = self.chat.ask_question(escalate_msg, timeout=1800)
 
-            if human_advice and human_advice.strip().lower() not in ("skip", "跳过", ""):
+            # 从 gaps 中提取 LLM 建议的命令并执行
+            extra_commands = self._extract_commands(gaps)
+            if not extra_commands:
+                # gaps 是描述性文字没有具体命令，让 LLM 基于 gaps 生成命令
+                extra_commands = self._generate_gap_commands(gaps)
+
+            extra_observations = []
+            for cmd in extra_commands[:8]:
+                result = self._run_cmd(cmd, timeout=15)
+                self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:1500]}")
+                extra_observations.append(str(result))
+
+            supplemental = "\n\n".join(extra_observations)
+            if supplemental.strip():
+                observations = observations + "\n\n## 补充收集\n" + supplemental
                 self.notebook.append_to_incident(
                     self.current_incident,
-                    f"\n## 人类建议\n{human_advice}\n",
+                    f"\n### 补充数据\n```\n{supplemental[:2000]}\n```\n",
                 )
-                self._close_incident(f"已升级给人类: {summary}")
-                self.notebook.commit(f"Escalated & answered: {summary}")
-                self.chat.inbox.put(human_advice)
-            else:
-                self._close_incident(f"已升级给人类(跳过/超时): {summary}")
-                self.notebook.commit(f"Escalated: {summary}")
 
-            self.mode = self.PATROL
-            self.current_issue = ""
-            return
+            # 重新诊断（带上更丰富的 observations）
+            diagnosis = self._diagnose(assessment, observations)
+
+            if self._drain_human_messages():
+                return
+
+        # ── 诊断结论 ──
+        conf = diagnosis.get("confidence", 0)
+        rtype = diagnosis.get("type", "unknown")
+        hyp = diagnosis.get("hypothesis", "")[:100]
+        self.chat.say(f"诊断完成: {hyp}", "info")
+
+        # 只有 escalate=YES 才真正通知人类（不阻塞，继续尝试修复）
+        if diagnosis.get("escalate") == "YES":
+            self.notebook.append_to_incident(
+                self.current_incident,
+                f"\n## 复杂问题（已通知人类，继续自主处理）\n"
+                f"{diagnosis.get('hypothesis', '无法确定根因')}\n",
+            )
+            self.chat.notify(
+                f"⚠️ 复杂问题，我会继续尝试解决:\n{summary}\n"
+                f"诊断: {hyp}\n"
+                f"把握度: {conf}%\n"
+                f"如需干预请随时输入指令。",
+                "warning",
+            )
+            # 不 return，继续走下面的修复流程
 
         # ── Sprint 3: 本地补丁生成与验证 ──
+        self.chat.say(f"🔧 类型: {rtype} | 开始自主修复", "action")
         self._maybe_run_patch_loop(diagnosis)
 
         if self._drain_human_messages():
             return
 
-        # ── 制定方案 ──
+        # ── 制定方案 + 执行 + 验证（最多重试 2 次）──
         self.mode = self.INCIDENT
-        action_plan = self._plan(diagnosis)
+        max_fix_attempts = 2
+        for fix_attempt in range(1, max_fix_attempts + 1):
+            action_plan = self._plan(diagnosis)
 
-        if not action_plan:
-            self.chat.say("无法制定修复方案，升级给人类。", "critical")
-            self._close_incident("无法制定修复方案，已升级给人类。")
-            self.mode = self.PATROL
-            self.current_issue = ""
-            return
-
-        self.notebook.append_to_incident(
-            self.current_incident,
-            f"\n## 行动计划\n{action_plan.to_markdown()}\n",
-        )
-
-        # ── 信任检查 ──
-        if self.readonly:
-            self.chat.say(f"只读模式，不执行操作。方案：\n   {action_plan.action}", "info")
-            self.notebook.append_to_incident(self.current_incident, "\n（只读模式，未执行）\n")
-            self._close_incident("只读模式，未执行修复。")
-            self.mode = self.PATROL
-            return
-
-        decision = self.trust.check(action_plan)
-
-        if decision == DENY:
-            self.chat.say(f"操作被授权规则拒绝：{action_plan.action}", "warning")
-            self.notebook.append_to_incident(self.current_incident, "\n（操作被拒绝）\n")
-            self._close_incident("操作被授权规则拒绝。")
-            self.mode = self.PATROL
-            return
-
-        # ── 限制检查 ──
-        action_type = self._classify_action(action_plan.action)
-        target_service = self._extract_service_name(action_plan.action)
-        allowed, reason = self.limits.check_action(action_type, target_service)
-        if not allowed:
-            self.chat.say(
-                f"⛔ 限制引擎拒绝执行: {reason}\n"
-                f"动作: {action_plan.action}\n"
-                f"需要人类决策。",
-                "critical",
-            )
-            self.notebook.append_to_incident(
-                self.current_incident,
-                f"\n## 限制拒绝\n{reason}\n升级给人类。\n",
-            )
-            self._close_incident(f"被限制引擎拒绝: {reason}")
-            self.mode = self.PATROL
-            self.current_issue = ""
-            return
-
-        if decision == ASK:
-            approved = self.chat.request_approval(action_plan.to_markdown())
-            if not approved:
-                self.notebook.append_to_incident(self.current_incident, "\n（人类否决）\n")
-                self._close_incident("操作被人类否决。")
-                self.mode = self.PATROL
-                return
-
-        if decision == NOTIFY_THEN_DO:
-            self.chat.say(f"即将执行：{action_plan.action}", "action")
-
-        # ── 执行 ──
-        before_state = self._quick_observe()
-        exec_result = self._execute(action_plan)
-
-        self.limits.record_action(action_type, target_service)
-
-        self.notebook.append_to_incident(
-            self.current_incident,
-            f"\n## 执行结果\n```\n{exec_result}\n```\n",
-        )
-
-        # ── 验证 ──
-        self.chat.say("修复完成，开始验证...", "info")
-        self._interruptible_sleep(3)
-        after_state = self._quick_observe()
-        verified = self._verify(action_plan, before_state, after_state)
-
-        if verified:
-            self.chat.say("验证通过，问题已修复！", "success")
-            self.notebook.append_to_incident(self.current_incident, "\n## 验证通过\n")
-            self._clear_issue_fingerprint(self.current_target.name, self.current_issue)
-        else:
-            self.chat.say("验证未通过，尝试回滚...", "warning")
-            self.notebook.append_to_incident(self.current_incident, "\n## 验证未通过\n")
-            self.limits.record_failure()
-            verify_msg = (
-                f"❓ 修复未达预期效果：\n"
-                f"执行了 {action_plan.action}，但验证未通过。请检查。\n\n"
-                f"请给出你的处理建议（或输入 'skip' 跳过）："
-            )
-            human_advice = self.chat.ask_question(verify_msg, timeout=1800)
-            if human_advice and human_advice.strip().lower() not in ("skip", "跳过", ""):
+            if not action_plan:
+                if fix_attempt < max_fix_attempts:
+                    self.chat.progress(f"方案生成失败，重新尝试... ({fix_attempt}/{max_fix_attempts})")
+                    continue
+                self.chat.notify(
+                    f"⚠️ 无法制定修复方案，请关注:\n{summary}", "critical"
+                )
                 self.notebook.append_to_incident(
                     self.current_incident,
-                    f"\n## 人类建议（验证失败后）\n{human_advice}\n",
+                    "\n## 无法制定修复方案\n已通知人类。\n",
                 )
-                self.chat.inbox.put(human_advice)
+                break
+
+            self.notebook.append_to_incident(
+                self.current_incident,
+                f"\n## 行动计划 (尝试 {fix_attempt})\n{action_plan.to_markdown()}\n",
+            )
+
+            # ── 信任检查 ──
+            if self.readonly:
+                self.chat.say(
+                    f"只读模式，不执行操作。方案：\n   {action_plan.action}", "info"
+                )
+                self.notebook.append_to_incident(
+                    self.current_incident, "\n（只读模式，未执行）\n"
+                )
+                break
+
+            decision = self.trust.check(action_plan)
+
+            if decision == DENY:
+                self.chat.say(
+                    f"操作被授权规则拒绝：{action_plan.action}", "warning"
+                )
+                self.notebook.append_to_incident(
+                    self.current_incident, "\n（操作被拒绝）\n"
+                )
+                break
+
+            # ── 限制检查 ──
+            action_type = self._classify_action(action_plan.action)
+            target_service = self._extract_service_name(action_plan.action)
+            allowed, reason = self.limits.check_action(action_type, target_service)
+            if not allowed:
+                self.chat.notify(
+                    f"⛔ 限制引擎拒绝执行: {reason}\n"
+                    f"动作: {action_plan.action}",
+                    "critical",
+                )
+                self.notebook.append_to_incident(
+                    self.current_incident,
+                    f"\n## 限制拒绝\n{reason}\n",
+                )
+                break
+
+            # ── 权限需要人类批准（唯一阻塞等人类的地方）──
+            if decision == ASK:
+                approved = self.chat.request_approval(action_plan.to_markdown())
+                if not approved:
+                    self.notebook.append_to_incident(
+                        self.current_incident, "\n（人类否决）\n"
+                    )
+                    break
+
+            if decision == NOTIFY_THEN_DO:
+                self.chat.say(f"即将执行：{action_plan.action}", "action")
+
+            # ── 执行 ──
+            self.chat.progress("执行中...")
+            before_state = self._quick_observe()
+            exec_result = self._execute(action_plan)
+
+            self.limits.record_action(action_type, target_service)
+
+            self.notebook.append_to_incident(
+                self.current_incident,
+                f"\n## 执行结果 (尝试 {fix_attempt})\n```\n{exec_result}\n```\n",
+            )
+            self.chat.trace(
+                "EXECUTE",
+                f"命令: {action_plan.action}\n结果:\n{exec_result[:2000]}",
+            )
+
+            # ── 验证 ──
+            self.chat.progress("验证中...")
+            self._interruptible_sleep(3)
+            after_state = self._quick_observe()
+            verified = self._verify(action_plan, before_state, after_state)
+
+            if verified:
+                self.chat.say("✅ 验证通过，问题已修复！", "success")
+                self.notebook.append_to_incident(
+                    self.current_incident, "\n## 验证通过\n"
+                )
+                self._clear_issue_fingerprint(
+                    self.current_target.name, self.current_issue
+                )
+                break
+            else:
+                self.chat.say(
+                    f"验证未通过 (尝试 {fix_attempt}/{max_fix_attempts})", "warning"
+                )
+                self.notebook.append_to_incident(
+                    self.current_incident,
+                    f"\n## 验证未通过 (尝试 {fix_attempt})\n",
+                )
+                self.limits.record_failure()
+
+                if fix_attempt < max_fix_attempts:
+                    # 用执行结果作为新观察，重新诊断
+                    self.chat.progress("验证未通过，重新诊断...")
+                    new_obs = (
+                        f"上次修复尝试:\n命令: {action_plan.action}\n"
+                        f"结果: {exec_result[:1000]}\n验证: 未通过"
+                    )
+                    observations = observations + "\n\n## 修复后观察\n" + new_obs
+                    diagnosis = self._diagnose(assessment, observations)
+                    if self._drain_human_messages():
+                        return
+                else:
+                    # 最后一次也失败，通知人类（不阻塞）
+                    self.chat.notify(
+                        f"⚠️ {max_fix_attempts} 次修复尝试均未通过验证，请关注:\n{summary}",
+                        "critical",
+                    )
 
         # ── 复盘 ──
         self._reflect()
