@@ -330,8 +330,8 @@ class HumanInteractionMixin:
         "date", "hostname", "uname", "env", "printenv", "id",
     )
 
-    # 连续自主执行轮次上限 —— 防止 LLM 跑飞
-    _MAX_AUTO_ROUNDS = 8
+    # 连续自主执行轮次上限 —— 从 limits.yaml 读取，防止 LLM 跑飞
+    _MAX_AUTO_ROUNDS_FALLBACK = 30
 
     def _is_safe_command(self, cmd: str) -> bool:
         """检查命令是否属于只读/信息收集类，可以不经人类确认直接执行"""
@@ -558,7 +558,8 @@ class HumanInteractionMixin:
             # ─── 安全阀：连续自主轮次上限 ───
             if not waiting_for_human:
                 auto_rounds += 1
-                if auto_rounds >= self._MAX_AUTO_ROUNDS:
+                max_rounds = getattr(self.limits.config, 'max_collab_auto_rounds', self._MAX_AUTO_ROUNDS_FALLBACK)
+                if auto_rounds >= max_rounds:
                     self.chat.say(
                         f"已连续自主执行 {auto_rounds} 步，暂停等待你的确认。",
                         "info",

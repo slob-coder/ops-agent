@@ -39,6 +39,7 @@ class SourceRepo:
     # Sprint 4: PR 工作流 + 部署观察
     git_host: str = ""                     # github | gitlab | noop | "" (禁用自动 PR)
     base_branch: str = "main"              # PR 目标分支
+    deploy_cmd: str = ""                   # 部署命令(build+restart)，如 "docker-compose -f xxx up -d --build"
     deploy_signal: dict = field(default_factory=dict)
     # deploy_signal 形如:
     #   {"type": "http", "url": "http://web/version", "expect_contains": "{commit_sha}",

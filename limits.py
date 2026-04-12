@@ -47,6 +47,9 @@ class LimitsConfig:
     # Sprint 4: 自动合并 PR 的硬上限
     max_auto_merges_per_day: int = 5
 
+    # 协作模式连续自主执行轮次上限
+    max_collab_auto_rounds: int = 30
+
     # 总开关
     enabled: bool = True
 
