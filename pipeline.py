@@ -137,10 +137,11 @@ class PipelineMixin:
         # trace 记录源码上下文
         self.chat.trace("DIAGNOSE", f"源码上下文:\n{source_text[:2000]}")
 
+        max_obs = getattr(self.limits.config, "max_observations_chars", 8000)
         prompt = self._fill_prompt(
             "diagnose",
             assessment=str(assessment),
-            observations=observations[:3000],
+            observations=observations[:max_obs],
             relevant_playbooks=playbook_content or "（无匹配的 Playbook）",
             similar_incidents=incidents_content or "（无历史记录）",
             system_map=system_map,
@@ -354,6 +355,43 @@ class PipelineMixin:
             self.current_incident = None
             self.chat._trace_file = "patrol"  # trace 恢复到默认
             self.limits.record_incident_end()
+
+    def _summarize_observations(
+        self, observations: str, diagnosis: dict, prev_summary: str = "",
+    ) -> str:
+        """把当前 observations 压缩为关键事实摘要，供下轮诊断使用。
+
+        采用滚动摘要策略：每轮只保留最新 gap 原始数据，历史信息全部
+        压缩进摘要。无论多少轮 COLLECT_MORE，总长度都有上界。
+        """
+        max_obs = getattr(self.limits.config, "max_observations_chars", 8000)
+        summary_budget = max(500, max_obs // 4)  # 摘要最多占 1/4 空间
+
+        diag_json = ""
+        try:
+            import json
+            diag_json = json.dumps(diagnosis, ensure_ascii=False)[:500]
+        except Exception:
+            diag_json = str(diagnosis)[:500]
+
+        prev_part = ""
+        if prev_summary:
+            prev_part = f"\n## 上轮摘要\n{prev_summary[:1000]}\n"
+
+        prompt = (
+            f"你是运维助手。将以下观测数据和诊断结论压缩为 {summary_budget} 字以内的关键事实摘要。\n"
+            f"保留：异常现象、已确认的事实、已排除的假设、关键数值、表结构信息。\n"
+            f"丢弃：正常的输出、重复信息、格式装饰、健康检查日志。\n"
+            f"{prev_part}\n"
+            f"## 当前诊断结论\n{diag_json}\n\n"
+            f"## 观测数据\n{observations[:max_obs]}"
+        )
+        try:
+            resp = self._ask_llm(prompt, max_tokens=800, phase="SUMMARIZE")
+            return resp[:summary_budget]
+        except Exception as e:
+            logger.warning(f"observations 摘要失败，回退截断: {e}")
+            return observations[:summary_budget]
 
     def _collect_gap_commands(self, gaps: list) -> str:
         """执行诊断中 gaps 列出的命令，返回收集到的输出

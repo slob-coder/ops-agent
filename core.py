@@ -66,6 +66,8 @@ class OpsAgent(
         self.llm = LLMClient()
         self.trust = TrustEngine(self.notebook, self.llm)
         self.chat = HumanChannel(self.notebook)
+        # observations 滚动摘要（跨 COLLECT_MORE 轮次积累的历史摘要）
+        self._obs_summary = ""
 
         # ── 多目标管理 ──
         if not targets:
@@ -498,6 +500,7 @@ class OpsAgent(
         exec_result = ""
         before_state = ""
         fix_verified = False
+        self._obs_summary = ""  # 每个 incident 重置滚动摘要
 
         max_total_rounds = 8      # 总轮次上限（防死循环）
         diagnose_rounds = 0       # 诊断轮次计数
@@ -560,8 +563,14 @@ class OpsAgent(
                     )
                     extra = self._collect_gap_commands(gaps)
                     if extra:
+                        # 滚动摘要：压缩历史 observations，保留最新 gap 原始数据
+                        self._obs_summary = self._summarize_observations(
+                            observations, diagnosis, self._obs_summary,
+                        )
                         observations = (
-                            observations + "\n\n## 补充收集\n" + extra
+                            "## 历史调查摘要\n" + self._obs_summary
+                            + f"\n\n## 最新收集 (第{diagnose_rounds}轮)\n"
+                            + extra
                         )
                         self.notebook.append_to_incident(
                             self.current_incident,

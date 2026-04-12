@@ -50,6 +50,9 @@ class LimitsConfig:
     # 协作模式连续自主执行轮次上限
     max_collab_auto_rounds: int = 30
 
+    # 诊断上下文: observations 传入 LLM 的最大字符数
+    max_observations_chars: int = 8000
+
     # 总开关
     enabled: bool = True
 

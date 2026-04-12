@@ -9,7 +9,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── 总开关 ──
-enabled: true
+enabled: false
 
 # ── 动作频率限制 ──
 # Agent 每小时/每天最多执行多少 L2+ 动作(重启、改配置、改代码)
@@ -39,3 +39,8 @@ llm_tokens_per_day: 1000000
 # ── 协作模式 ──
 # 协作排查时 Agent 连续自主执行的最大轮次,超过后暂停等人确认
 max_collab_auto_rounds: 30
+
+# ── 诊断上下文限制 ──
+# 传入 LLM 诊断 prompt 的 observations 最大字符数
+# 过小会导致 COLLECT_MORE 补充数据被截断,造成死循环
+max_observations_chars: 8000
