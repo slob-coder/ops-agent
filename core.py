@@ -511,7 +511,10 @@ class OpsAgent(
         for _ in range(max_total_rounds):
             # 每个状态转换前检查人类输入
             if self._drain_human_messages():
-                return
+                # 只有明确的中断指令(stop/pause/quit)才退出 incident_loop
+                # 普通消息/空行/误触不应中断状态机
+                if self.mode == self.PATROL or self.paused or not self._running:
+                    return
 
             # ── DIAGNOSE ──
             if state == "DIAGNOSE":
@@ -722,11 +725,11 @@ class OpsAgent(
                 self.notebook.append_to_incident(
                     self.current_incident,
                     f"\n## 执行结果 (尝试 {fix_attempts})\n"
-                    f"```\n{exec_result[:2000]}\n```\n",
+                    f"```\n{exec_result[:6000]}\n```\n",
                 )
                 self.chat.trace(
                     "EXECUTE",
-                    f"命令: {plan.action}\n结果:\n{exec_result[:2000]}",
+                    f"命令: {plan.action}\n结果:\n{exec_result[:6000]}",
                 )
 
                 state = "VERIFY"
@@ -764,7 +767,7 @@ class OpsAgent(
                             observations
                             + f"\n\n## 修复失败 (尝试 {fix_attempts})\n"
                             f"命令: {plan.action}\n"
-                            f"结果: {exec_result[:1000]}\n验证: 未通过"
+                            f"结果: {exec_result[:4000]}\n验证: 未通过"
                         )
                         self.chat.progress("验证未通过，重新诊断...")
                         state = "DIAGNOSE"
