@@ -2170,7 +2170,12 @@ def main():
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
-    agent.run()
+    try:
+        agent.run()
+    finally:
+        # 确保终端状态恢复（防止 echo 丢失）
+        from chat import _restore_terminal
+        _restore_terminal()
 
 
 if __name__ == "__main__":

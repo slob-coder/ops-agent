@@ -11,6 +11,7 @@ HumanChannel — Agent 与人类的对话通道（交互式版本）
 """
 
 import sys
+import os
 import queue
 import threading
 import logging
@@ -19,6 +20,35 @@ from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger("ops-agent.chat")
+
+# ── 终端状态保存/恢复（防止退出后 echo 丢失）──
+_saved_termios = None
+try:
+    import termios
+    if sys.stdin.isatty():
+        _saved_termios = termios.tcgetattr(sys.stdin.fileno())
+except Exception:
+    pass
+
+
+def _restore_terminal():
+    """恢复终端到启动时的状态（确保 echo 等标志正常）"""
+    global _saved_termios
+    if _saved_termios is not None:
+        try:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, _saved_termios)
+        except Exception:
+            pass
+    # 兜底：尝试用 stty sane 恢复
+    try:
+        if sys.stdin.isatty():
+            os.system("stty sane")
+    except Exception:
+        pass
+
+
+import atexit
+atexit.register(_restore_terminal)
 
 # ── 尝试导入 prompt_toolkit（推荐模式）──
 try:
@@ -280,6 +310,8 @@ class HumanChannel:
 
     def stop(self):
         self._running = False
+        # 恢复终端状态（prompt_toolkit 可能把 echo 关掉了）
+        _restore_terminal()
 
     def banner(self, agent_name: str = "OpsAgent"):
         """启动横幅"""
