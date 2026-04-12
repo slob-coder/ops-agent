@@ -741,7 +741,9 @@ class OpsAgent(
             if prev.current_target_name and prev.current_target_name in self.toolboxes:
                 self._switch_target(prev.current_target_name)
             self.mode = prev.mode or self.PATROL
-            self.paused = prev.paused
+            # 不恢复 paused 状态：重启后应默认巡检，避免上次 pause 导致永久静默
+            if prev.paused:
+                logger.info("上次退出时处于暂停状态，重启后自动恢复巡检")
             self.readonly = self.readonly or prev.readonly
             self.current_incident = prev.current_incident or None
             self.current_issue = prev.current_issue or ""

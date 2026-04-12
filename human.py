@@ -279,6 +279,9 @@ class HumanInteractionMixin:
         commands = self._extract_commands(response)
 
         if commands:
+            # 清除本次消息触发的中断标志，避免自己的输入导致命令被跳过
+            # 只有在命令执行期间有 *新的* 人类输入才应触发中断
+            self.chat.clear_interrupt()
             self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
             cmd_results = []
             for cmd in commands[:8]:
