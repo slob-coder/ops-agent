@@ -39,11 +39,11 @@ targets:
         language: java
         build_cmd: mvn clean compile        # 编译验证命令
         test_cmd: mvn test                  # 测试验证命令
-        # ── git_host: Git 托管平台类型，决定 Agent 如何创建 PR ──
-        # 可选值: github | gitlab | noop | ""(空=禁用自动 PR)
+        # ── git_host: Git 托管平台类型，决定 Agent 用哪个 API 创建 PR ──
+        # 可选值: github | gitlab | noop | ""(空=不走 PR，直接 push+deploy)
         #
-        # ⚠️ 必须配置！否则补丁验证通过后不会推送 PR，也不会触发部署。
-        #     repo_url 只告诉 Agent 仓库地址，git_host 才告诉它用什么平台 API。
+        # 注意：当前 Agent 默认走 push+deploy 快速路径，不经过 PR。
+        # git_host 仅在 PR 严格模式启用时需要。
         #
         # 安装与认证 (GitHub):
         #   1. 安装 gh CLI:
@@ -87,7 +87,7 @@ targets:
         language: python
         build_cmd: python -m py_compile $(find . -name "*.py")
         test_cmd: pytest -x
-        # ⚠️ 必须配置 git_host，否则补丁通过后不会推送 PR 和部署
+        # ⚠️ git_host 仅 PR 模式需要，当前默认走 push+deploy 快速路径
         # 详见上方示例 1 中的 git_host 注释(安装+认证步骤)
         git_host: github
         # Docker 项目推荐用 docker-compose 重建部署

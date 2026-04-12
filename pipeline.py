@@ -217,8 +217,8 @@ class PipelineMixin:
             self.chat.say(
                 f"✓ 补丁本地验证通过 ({verified.result.short_summary()})", "success"
             )
-            # Sprint 4: 推送 + PR + 部署观察
-            self._run_pr_workflow(verified, repo)
+            # 直接推送 + 部署（不走 PR 流程）
+            self._deploy_patch(verified, repo)
             return
         else:
             try:
@@ -351,3 +351,182 @@ class PipelineMixin:
             self.notebook.append_to_incident(self.current_incident, f"- {text}\n")
         except Exception:
             pass
+
+    # ═══════════════════════════════════════════════════════════
+    #  补丁部署（替代 PR 工作流的快速路径）
+    # ═══════════════════════════════════════════════════════════
+
+    def _deploy_patch(self, verified, repo) -> None:
+        """补丁验证通过后：merge → push → deploy → 验证
+
+        每个环节失败都通知人类。
+        """
+        branch = verified.result.branch_name
+        commit_sha = verified.result.commit_sha
+        repo_path = repo.path
+        main_branch = repo.branch or "main"
+
+        # 清理 patch_applier 遗留的 stash（如果有）
+        stash_list = str(self._run_cmd(
+            f"git -C {repo_path} stash list", timeout=5
+        ))
+        if "ops-agent-pre-patch" in stash_list:
+            self._run_cmd(f"git -C {repo_path} stash drop", timeout=5)
+
+        # ── 1. 合并到主分支 ──
+        self.chat.say(f"合并 {branch} → {main_branch}...", "info")
+        try:
+            self._run_cmd(
+                f"git -C {repo_path} checkout {main_branch}", timeout=10
+            )
+            merge_out = str(self._run_cmd(
+                f"git -C {repo_path} merge {branch} --no-edit", timeout=30
+            ))
+            if "CONFLICT" in merge_out.upper():
+                self._run_cmd(
+                    f"git -C {repo_path} merge --abort", timeout=10
+                )
+                self.chat.notify(
+                    f"🚨 合并冲突: {branch} → {main_branch}\n"
+                    f"已中止合并，fix 分支保留在本地。\n"
+                    f"请手动合并: cd {repo_path} && git merge {branch}\n"
+                    f"补丁说明: {verified.patch.description[:200]}",
+                    "critical",
+                )
+                return
+        except Exception as e:
+            self.chat.notify(
+                f"🚨 分支操作失败: {e}\n"
+                f"fix 分支: {branch}，请手动处理",
+                "critical",
+            )
+            return
+
+        # ── 2. 推送 ──
+        self.chat.say("推送代码...", "info")
+        try:
+            self._run_cmd(f"git -C {repo_path} push", timeout=30)
+            self.chat.say(f"✓ 代码已推送 ({commit_sha[:12]})", "success")
+        except Exception as e:
+            self._run_cmd(
+                f"git -C {repo_path} reset --hard ORIG_HEAD", timeout=10
+            )
+            self.chat.notify(
+                f"🚨 git push 失败: {e}\n"
+                f"本地已回滚到合并前状态。\n"
+                f"fix 分支 {branch} 保留在本地，请手动推送。\n"
+                f"补丁说明: {verified.patch.description[:200]}",
+                "critical",
+            )
+            return
+
+        # ── 3. 部署 ──
+        deploy_cmd = getattr(repo, "deploy_cmd", "")
+        if not deploy_cmd:
+            self.chat.notify(
+                f"⚠️ 代码已推送，但未配置 deploy_cmd，请手动部署。\n"
+                f"仓库: {repo_path} | commit: {commit_sha[:12]}\n"
+                f"补丁说明: {verified.patch.description[:200]}",
+                "warning",
+            )
+            return
+
+        self.chat.say(f"执行部署: {deploy_cmd[:80]}", "action")
+        try:
+            self._run_cmd(deploy_cmd, timeout=300)
+            self.chat.say("✓ 部署命令执行完成", "success")
+        except Exception as e:
+            self.chat.notify(
+                f"🚨 部署失败: {e}\n"
+                f"代码已推送但未生效，正在自动回滚...",
+                "critical",
+            )
+            self._rollback_deployment(repo, main_branch, commit_sha, f"部署失败: {e}")
+            return
+
+        # ── 4. 验证 ──
+        self.chat.say("等待服务启动，验证修复效果...", "info")
+        self._interruptible_sleep(15)
+
+        observations = self._observe()
+        is_normal = True
+        if observations:
+            assessment = self._assess(observations)
+            is_normal = assessment.get("severity") == "normal"
+
+        if is_normal:
+            self.chat.notify(
+                f"✅ 自动修复成功并已部署！\n"
+                f"仓库: {repo.name} | commit: {commit_sha[:12]}\n"
+                f"补丁说明: {verified.patch.description[:200]}",
+                "success",
+            )
+            try:
+                self._close_incident("自动修复成功并通过验证")
+            except Exception:
+                pass
+        else:
+            obs_hint = f"\n当前观察: {observations[:300]}" if observations else ""
+            self.chat.notify(
+                f"⚠️ 部署后验证发现问题，正在自动回滚...{obs_hint}",
+                "critical",
+            )
+            self._rollback_deployment(
+                repo, main_branch, commit_sha, "部署后验证失败"
+            )
+
+        # ── 5. 清理 fix 分支 ──
+        try:
+            self._run_cmd(
+                f"git -C {repo_path} branch -d {branch}", timeout=10
+            )
+        except Exception:
+            pass
+
+    def _rollback_deployment(self, repo, main_branch, original_sha, reason):
+        """回滚部署：revert → push → redeploy → 通知人类"""
+        repo_path = repo.path
+        deploy_cmd = getattr(repo, "deploy_cmd", "")
+
+        # 1. revert + push
+        try:
+            self._run_cmd(
+                f"git -C {repo_path} revert --no-edit {original_sha}", timeout=10
+            )
+            self._run_cmd(f"git -C {repo_path} push", timeout=30)
+            self.chat.say(f"代码已回滚 (revert {original_sha[:12]})", "info")
+        except Exception as e:
+            self.chat.notify(
+                f"🚨 代码回滚失败！需要人工立即介入！\n"
+                f"仓库: {repo_path}\n"
+                f"失败原因: {e}\n"
+                f"原始补丁 commit: {original_sha[:12]}\n"
+                f"回滚原因: {reason}",
+                "critical",
+            )
+            return
+
+        # 2. 重新部署回滚后的代码
+        if deploy_cmd:
+            try:
+                self._run_cmd(deploy_cmd, timeout=300)
+                self.chat.say("回滚后重新部署完成", "info")
+            except Exception as e:
+                self.chat.notify(
+                    f"🚨 回滚后重新部署也失败了！服务可能异常！\n"
+                    f"仓库: {repo_path}\n"
+                    f"deploy_cmd: {deploy_cmd}\n"
+                    f"错误: {e}\n"
+                    f"请立即手动检查服务状态！",
+                    "critical",
+                )
+                return
+
+        # 3. 通知人类
+        self.chat.notify(
+            f"⚠️ 补丁已自动回滚\n"
+            f"原因: {reason}\n"
+            f"代码: revert {original_sha[:12]} → 已推送并重新部署\n"
+            f"请评估根因并决定是否再次尝试修复。",
+            "warning",
+        )
