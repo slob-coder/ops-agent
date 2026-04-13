@@ -133,7 +133,8 @@ class HumanChannel:
         while self._running:
             try:
                 # patch_stdout 让 print 输出从输入框上方滚出
-                with patch_stdout(raw=True):
+                # 注意：不要用 raw=True，否则会输出控制字符乱码
+                with patch_stdout():
                     line = self._session.prompt()
                 if not line:
                     continue
