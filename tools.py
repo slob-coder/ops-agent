@@ -81,6 +81,16 @@ class TargetConfig:
     # 源码地图(供 bug 修复用)
     source_repos: list = field(default_factory=list)
 
+    def get_source_repos(self) -> list:
+        """返回 SourceRepo 对象列表
+
+        保持与 targets.Target 相同的 API。
+        source_repos 可能是 list[dict] 或 list[SourceRepo]。
+        """
+        from targets import SourceRepo
+        return [SourceRepo.from_dict(r) if isinstance(r, dict) else r
+                for r in (self.source_repos or [])]
+
     @classmethod
     def local(cls):
         return cls(mode="local", name="local")
