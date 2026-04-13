@@ -247,11 +247,15 @@ class PipelineMixin:
             if "playbook" in f:
                 playbook += self.notebook.read(f) + "\n"
 
+        # 提取构建/部署配置
+        build_deploy_context = self._get_build_deploy_context()
+
         prompt = self._fill_prompt(
             "plan",
             diagnosis=str(diagnosis),
             matched_playbook=playbook or "（无匹配的 Playbook）",
             permissions=permissions,
+            build_deploy_context=build_deploy_context,
         )
 
         response = self._ask_llm(prompt, phase="PLAN")
@@ -262,6 +266,35 @@ class PipelineMixin:
                 "action",
             )
         return plan
+
+    def _get_build_deploy_context(self) -> str:
+        """提取当前目标的构建/部署配置（用于 plan prompt）"""
+        if not self.current_target or not self.current_target.source_repos:
+            return "（未配置源码仓库，不涉及构建/部署）"
+
+        repos = self.current_target.get_source_repos()
+        if not repos:
+            return "（未配置源码仓库，不涉及构建/部署）"
+
+        lines = ["当前目标关联的源码仓库："]
+        for repo in repos:
+            lines.append(f"\n### {repo.name}")
+            if repo.language:
+                lines.append(f"- 语言: {repo.language}")
+            if repo.build_cmd:
+                lines.append(f"- 构建命令: `{repo.build_cmd}`")
+            else:
+                lines.append(f"- 构建命令: （未配置）")
+            if repo.test_cmd:
+                lines.append(f"- 测试命令: `{repo.test_cmd}`")
+            if repo.deploy_cmd:
+                lines.append(f"- 部署命令: `{repo.deploy_cmd}`")
+            else:
+                lines.append(f"- 部署命令: （未配置，需手动重启服务）")
+            if repo.runtime_service:
+                lines.append(f"- 运行时服务: {repo.runtime_service}")
+
+        return "\n".join(lines)
 
     def _execute(self, plan) -> str:
         """执行修复动作 — 按 plan.steps 逐步执行"""
