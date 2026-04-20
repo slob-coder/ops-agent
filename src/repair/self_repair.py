@@ -357,7 +357,7 @@ class SelfRepairSession:
             # fallback: 用运行目录的 prompt
             prompt_path = Path(
                 os.path.dirname(os.path.abspath(__file__))
-            ) / "prompts" / "self_diagnose.md"
+            ).parent.parent / "prompts" / "self_diagnose.md"
         if not prompt_path.exists():
             logger.error("self_diagnose.md not found")
             return None

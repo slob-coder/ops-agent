@@ -184,7 +184,7 @@ class PRWorkflowMixin:
     def _build_pr_body(self, verified, repo, commit_sha: str) -> str:
         """Sprint 4: 渲染 PR 描述(基于 templates/pr-body.md)"""
         try:
-            tmpl_path = Path(__file__).parent / "templates" / "pr-body.md"
+            tmpl_path = Path(__file__).parent.parent.parent / "templates" / "pr-body.md"
             tmpl = tmpl_path.read_text(encoding="utf-8")
         except Exception:
             tmpl = ("## OpsAgent auto patch\n\n"

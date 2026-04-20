@@ -19,7 +19,7 @@ class PromptsMixin:
     def _load_prompt(self, name: str) -> str:
         """加载 prompt 模板"""
         if name not in self._prompts:
-            prompt_path = Path(__file__).parent / "prompts" / f"{name}.md"
+            prompt_path = Path(__file__).parent.parent.parent / "prompts" / f"{name}.md"
             self._prompts[name] = prompt_path.read_text(encoding="utf-8")
         return self._prompts[name]
 
