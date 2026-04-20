@@ -51,14 +51,14 @@ SENSITIVE_FILES = frozenset({
 
 # ─── 默认测试命令 ────────────────────────────────
 DEFAULT_TEST_CMD = (
-    "python3 tests/test_basic.py && "
-    "python3 tests/test_sprint1.py && "
-    "python3 tests/test_sprint2.py && "
-    "python3 tests/test_sprint3.py && "
-    "python3 tests/test_sprint4.py && "
-    "python3 tests/test_sprint5.py && "
-    "python3 tests/test_sprint6.py && "
-    "python3 tests/test_blacklist.py"
+    "python3 test_basic.py && "
+    "python3 test_sprint1.py && "
+    "python3 test_sprint2.py && "
+    "python3 test_sprint3.py && "
+    "python3 test_sprint4.py && "
+    "python3 test_sprint5.py && "
+    "python3 test_sprint6.py && "
+    "python3 test_blacklist.py"
 )
 
 # ─── 状态文件(告诉新进程需要做 probation 自检)────
