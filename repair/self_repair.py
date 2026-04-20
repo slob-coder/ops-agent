@@ -27,9 +27,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
-from self_context import SelfContext
-from stack_parser import StackFrame
-from targets import SourceRepo
+from repair.self_context import SelfContext
+from repair.stack_parser import StackFrame
+from infra.targets import SourceRepo
 
 logger = logging.getLogger("ops-agent.self_repair")
 
@@ -423,7 +423,7 @@ class SelfRepairSession:
             language="python",
         )
         try:
-            from source_locator import SourceLocator
+            from repair.source_locator import SourceLocator
             locator = SourceLocator(repos=[repo])
             result = locator.locate(frames)
             return result.locations if hasattr(result, "locations") else []

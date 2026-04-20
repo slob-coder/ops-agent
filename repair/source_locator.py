@@ -18,8 +18,8 @@ import os
 import logging
 from dataclasses import dataclass, field
 
-from stack_parser import StackFrame
-from targets import SourceRepo
+from repair.stack_parser import StackFrame
+from infra.targets import SourceRepo
 from context_limits import get_context_limits
 
 logger = logging.getLogger("ops-agent.source_locator")

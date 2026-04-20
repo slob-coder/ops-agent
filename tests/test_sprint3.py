@@ -11,11 +11,11 @@ import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from patch_generator import PatchGenerator, Patch
-from patch_applier import PatchApplier, VerificationResult
-from patch_loop import PatchLoop
-from targets import SourceRepo
-from stack_parser import StackFrame
+from safety.patch_generator import PatchGenerator, Patch
+from safety.patch_applier import PatchApplier, VerificationResult
+from safety.patch_loop import PatchLoop
+from infra.targets import SourceRepo
+from repair.stack_parser import StackFrame
 
 PASS = 0
 FAIL = 0

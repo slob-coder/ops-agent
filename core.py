@@ -9,18 +9,18 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from llm import LLMClient, LLMInterrupted, LLMDegraded
-from notebook import Notebook
-from tools import ToolBox, TargetConfig, CommandInterrupted
-from trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
-from chat import HumanChannel
+from infra.llm import LLMClient, LLMInterrupted, LLMDegraded
+from infra.notebook import Notebook
+from infra.tools import ToolBox, TargetConfig, CommandInterrupted
+from safety.trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
+from infra.chat import HumanChannel
 
-from prompt_engine import PromptsMixin
-from pipeline import PipelineMixin
-from pr_workflow import PRWorkflowMixin
-from human import HumanInteractionMixin
-from metrics import MetricsMixin
-from parsers import ParsersMixin
+from agent.prompt_engine import PromptsMixin
+from agent.pipeline import PipelineMixin
+from agent.pr_workflow import PRWorkflowMixin
+from agent.human import HumanInteractionMixin
+from agent.metrics import MetricsMixin
+from agent.parsers import ParsersMixin
 from context_limits import get_context_limits, reload_context_limits
 
 # ─── 日志配置 ───
@@ -84,12 +84,12 @@ class OpsAgent(
         self.tools = self.toolboxes[targets[0].name]
 
         # ── 限制引擎 ──
-        from limits import LimitsEngine, LimitsConfig
+        from safety.limits import LimitsEngine, LimitsConfig
         limits_path = str(Path(notebook_path) / "config" / "limits.yaml")
         self.limits = LimitsEngine(LimitsConfig.from_yaml(limits_path))
 
         # ── 紧急停止 ──
-        from safety import EmergencyStop
+        from safety.safety import EmergencyStop
         self.emergency = EmergencyStop(notebook_path)
 
         # ── 状态 ──
@@ -117,9 +117,9 @@ class OpsAgent(
         self._last_locate_result = None  # Sprint 2 在 _diagnose 中填充
         self._last_error_text = ""       # Sprint 4: 复发检测的 baseline 文本
         try:
-            from patch_generator import PatchGenerator
-            from patch_applier import PatchApplier
-            from patch_loop import PatchLoop
+            from safety.patch_generator import PatchGenerator
+            from safety.patch_applier import PatchApplier
+            from safety.patch_loop import PatchLoop
             self.patch_loop = PatchLoop(
                 generator=PatchGenerator(self.llm),
                 applier=PatchApplier(),
@@ -132,8 +132,8 @@ class OpsAgent(
 
         # ── Sprint 4: PR 工作流 + 生产观察 ──
         try:
-            from deploy_watcher import DeployWatcher
-            from production_watcher import ProductionWatcher
+            from infra.deploy_watcher import DeployWatcher
+            from infra.production_watcher import ProductionWatcher
             self.deploy_watcher = DeployWatcher()
             self.prod_watcher = ProductionWatcher()
         except Exception as e:
@@ -146,7 +146,7 @@ class OpsAgent(
         self.last_loop_time = 0.0
         self.state_path = str(Path(notebook_path) / "state.json")
         try:
-            from pending_events import PendingEventQueue
+            from reliability.pending_events import PendingEventQueue
             self.pending_queue = PendingEventQueue(
                 str(Path(notebook_path) / "pending-events.jsonl")
             )
@@ -158,13 +158,13 @@ class OpsAgent(
 
         # ── Sprint 6: 可观测性 ──
         try:
-            from audit import AuditLog
+            from reliability.audit import AuditLog
             self.audit = AuditLog(str(Path(notebook_path) / "audit"))
         except Exception as e:
             logger.warning(f"audit init failed: {e}")
             self.audit = None
         try:
-            from notifier import NotifierConfig, make_notifier, PolicyNotifier
+            from infra.notifier import NotifierConfig, make_notifier, PolicyNotifier
             ncfg = NotifierConfig.from_yaml(
                 str(Path(notebook_path) / "config" / "notifier.yaml")
             )
@@ -314,7 +314,7 @@ class OpsAgent(
         selfdev_path = os.environ.get("OPS_AGENT_SELFDEV_PATH", "")
         if selfdev_path:
             try:
-                from self_repair import run_probation_if_pending
+                from repair.self_repair import run_probation_if_pending
                 run_probation_if_pending(self, selfdev_path)
             except Exception as e:
                 logger.warning(f"probation check crashed: {e}")
@@ -806,7 +806,7 @@ class OpsAgent(
 
     def _build_state_snapshot(self):
         """构造当前 AgentState"""
-        from state import AgentState
+        from reliability.state import AgentState
         return AgentState(
             mode=self.mode,
             current_target_name=getattr(self.current_target, "name", "") or "",
@@ -829,7 +829,7 @@ class OpsAgent(
     def recover_state(self) -> bool:
         """启动时尝试恢复上次状态。返回是否成功恢复了未完成的工作。"""
         try:
-            from state import AgentState
+            from reliability.state import AgentState
             prev = AgentState.load(self.state_path)
         except Exception as e:
             logger.debug(f"recover_state load failed: {e}")

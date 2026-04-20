@@ -135,7 +135,7 @@ class MetricsMixin:
     def start_health_server(self, host: str = "127.0.0.1", port: int = 9876) -> bool:
         """启动健康检查后台线程。失败返回 False。"""
         try:
-            from health import HealthServer
+            from reliability.health import HealthServer
             self.health_server = HealthServer(
                 snapshot_fn=self.health_snapshot,
                 metrics_fn=self.render_prometheus_metrics,

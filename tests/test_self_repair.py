@@ -16,12 +16,12 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from self_repair import (
+from repair.self_repair import (
     SelfRepairSession, _parse_json_block,
     FORBIDDEN_FILES, SENSITIVE_FILES,
     SELFREPAIR_PENDING_FILE,
 )
-from self_context import SelfContext, _truncate, _list_source_tree, _sanitize_state
+from repair.self_context import SelfContext, _truncate, _list_source_tree, _sanitize_state
 
 
 passed = 0

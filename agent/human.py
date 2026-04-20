@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from llm import LLMDegraded
+from infra.llm import LLMDegraded
 
 logger = logging.getLogger("ops-agent")
 
@@ -726,7 +726,7 @@ class HumanInteractionMixin:
             return
 
         try:
-            from self_repair import SelfRepairSession
+            from repair.self_repair import SelfRepairSession
         except Exception as e:
             logger.exception("SelfRepairSession 导入失败")
             self.chat.say(f"自修复模块加载失败: {e}", "warning")

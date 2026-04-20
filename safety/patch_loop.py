@@ -16,8 +16,8 @@ import logging
 from context_limits import get_context_limits as _ctx
 from dataclasses import dataclass
 
-from patch_generator import PatchGenerator, Patch
-from patch_applier import PatchApplier, VerificationResult
+from safety.patch_generator import PatchGenerator, Patch
+from safety.patch_applier import PatchApplier, VerificationResult
 
 logger = logging.getLogger("ops-agent.patch_loop")
 

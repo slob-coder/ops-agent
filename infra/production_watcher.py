@@ -17,7 +17,7 @@ from context_limits import get_context_limits
 from dataclasses import dataclass
 from enum import Enum
 
-from stack_parser import StackTraceParser
+from repair.stack_parser import StackTraceParser
 
 logger = logging.getLogger("ops-agent.production_watcher")
 

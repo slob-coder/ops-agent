@@ -145,7 +145,7 @@ class ParsersMixin:
 
     def _parse_plan(self, response: str) -> Optional["ActionPlan"]:
         """解析 plan 输出 — 要求 JSON 格式"""
-        from trust import ActionPlan
+        from safety.trust import ActionPlan
 
         data = self._extract_json(response)
         if not data or "steps" not in data:

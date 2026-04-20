@@ -18,7 +18,7 @@ class PRWorkflowMixin:
 
         测试可以 monkey-patch 这个方法注入 NoopGitHost。
         """
-        from git_host import make_client
+        from infra.git_host import make_client
         return make_client(getattr(repo, "git_host", "") or "noop")
 
     def _make_observe_fn(self, repo):
@@ -130,7 +130,7 @@ class PRWorkflowMixin:
             return
 
         # 8. 复发或观察失败 → revert
-        from production_watcher import WatchOutcome
+        from infra.production_watcher import WatchOutcome
         if wresult.outcome == WatchOutcome.FAILED_RECURRENCE:
             self.chat.say("⚠ 检测到原异常复发,启动自动 revert", "critical")
             self._run_auto_revert(repo, host, commit_sha, branch,
@@ -146,7 +146,7 @@ class PRWorkflowMixin:
                          original_branch: str, failure_reason: str) -> None:
         """Sprint 4: 自动 revert 已合并的补丁 + 升级人类"""
         try:
-            from revert_generator import RevertGenerator
+            from safety.revert_generator import RevertGenerator
             rg = RevertGenerator(host)
             result = rg.revert_and_merge(
                 repo_path=repo.path, commit_sha=commit_sha,

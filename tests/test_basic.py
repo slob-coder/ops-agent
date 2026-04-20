@@ -28,7 +28,7 @@ def test(name, condition):
 #  Notebook 测试
 # ═══════════════════════════════════════════
 print("\n=== Notebook 测试 ===")
-from notebook import Notebook
+from infra.notebook import Notebook
 
 test_dir = tempfile.mkdtemp(prefix="ops_agent_test_")
 nb = Notebook(test_dir)
@@ -93,7 +93,7 @@ shutil.rmtree(test_dir)
 #  Tools 测试
 # ═══════════════════════════════════════════
 print("\n=== Tools 测试 ===")
-from tools import ToolBox, TargetConfig, CommandResult
+from infra.tools import ToolBox, TargetConfig, CommandResult
 
 tb = ToolBox(TargetConfig.local())
 
@@ -143,7 +143,7 @@ test("CommandResult.stderr", "error" in cr2.output)
 #  Trust 测试
 # ═══════════════════════════════════════════
 print("\n=== Trust 测试 ===")
-from trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
+from safety.trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
 
 # 测试默认策略（不调 LLM）
 test_dir2 = tempfile.mkdtemp(prefix="ops_agent_test_trust_")

@@ -11,17 +11,17 @@ import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from git_host import (
+from infra.git_host import (
     GitHubClient, GitLabClient, NoopGitHost, PRStatus, PRResult, PR, make_client,
 )
-from deploy_watcher import DeployWatcher, DeployStatus
-from production_watcher import ProductionWatcher, WatchOutcome
-from revert_generator import RevertGenerator
-from limits import LimitsEngine, LimitsConfig
-from targets import SourceRepo
-from patch_generator import Patch
-from patch_applier import VerificationResult
-from patch_loop import VerifiedPatch
+from infra.deploy_watcher import DeployWatcher, DeployStatus
+from infra.production_watcher import ProductionWatcher, WatchOutcome
+from safety.revert_generator import RevertGenerator
+from safety.limits import LimitsEngine, LimitsConfig
+from infra.targets import SourceRepo
+from safety.patch_generator import Patch
+from safety.patch_applier import VerificationResult
+from safety.patch_loop import VerifiedPatch
 
 PASS = 0
 FAIL = 0
@@ -372,8 +372,8 @@ import main as ops_main
 
 class _Stub(ops_main.OpsAgent):
     def __init__(self):
-        from notebook import Notebook
-        from chat import HumanChannel
+        from infra.notebook import Notebook
+        from infra.chat import HumanChannel
         self._tmp = tempfile.mkdtemp()
         self.notebook = Notebook(self._tmp)
         self.chat = _SilentChat()
@@ -384,10 +384,10 @@ class _Stub(ops_main.OpsAgent):
         with open(os.path.join(self._tmp, "incidents", "active", "incident-001.md"), "w") as f:
             f.write("# test\n")
         self._last_error_text = PY_TRACE
-        from limits import LimitsEngine, LimitsConfig
+        from safety.limits import LimitsEngine, LimitsConfig
         self.limits = LimitsEngine(LimitsConfig(max_auto_merges_per_day=5))
-        from deploy_watcher import DeployWatcher
-        from production_watcher import ProductionWatcher
+        from infra.deploy_watcher import DeployWatcher
+        from infra.production_watcher import ProductionWatcher
         # 用快速假时钟
         self._clock = [0.0]
         def _sleep(s): self._clock[0] += s
@@ -478,7 +478,7 @@ try:
                       deploy_signal={"type": "fixed_wait", "seconds": 1})
 
     # patch revert_and_merge 用全 ok stub
-    import revert_generator as rg_mod
+    import safety.revert_generator as rg_mod
     orig_run = rg_mod.RevertGenerator._default_run
     rg_mod.RevertGenerator._default_run = staticmethod(lambda cmd, cwd, timeout=120: (0, ""))
     try:

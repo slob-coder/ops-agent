@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from self_repair import SelfRepairSession
+from repair.self_repair import SelfRepairSession
 
 passed = 0
 failed = 0

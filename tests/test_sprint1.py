@@ -25,7 +25,7 @@ def test(name, condition):
 #  Limits 测试
 # ═══════════════════════════════════════════
 print("\n=== Limits 测试 ===")
-from limits import LimitsConfig, LimitsEngine
+from safety.limits import LimitsConfig, LimitsEngine
 
 # 默认配置
 cfg = LimitsConfig()
@@ -99,7 +99,7 @@ test("status 包含 token 字段", "tokens_last_hour" in status)
 #  Safety / EmergencyStop 测试
 # ═══════════════════════════════════════════
 print("\n=== Safety 测试 ===")
-from safety import EmergencyStop
+from safety.safety import EmergencyStop
 
 test_dir = tempfile.mkdtemp(prefix="ops_safety_test_")
 es = EmergencyStop(test_dir)
@@ -135,7 +135,7 @@ shutil.rmtree(test_dir)
 #  Targets 配置加载测试
 # ═══════════════════════════════════════════
 print("\n=== Targets 加载测试 ===")
-from targets import load_targets, render_targets_summary, Target
+from infra.targets import load_targets, render_targets_summary, Target
 
 test_dir = tempfile.mkdtemp(prefix="ops_targets_test_")
 yaml_path = os.path.join(test_dir, "targets.yaml")
@@ -190,7 +190,7 @@ shutil.rmtree(test_dir)
 #  TargetConfig 多模式测试
 # ═══════════════════════════════════════════
 print("\n=== TargetConfig 多模式测试 ===")
-from tools import TargetConfig, ToolBox
+from infra.tools import TargetConfig, ToolBox
 
 # local
 tc = TargetConfig.local()

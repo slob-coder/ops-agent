@@ -20,7 +20,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from tools import TargetConfig
+from infra.tools import TargetConfig
 
 # 重新导出 OpsAgent，保证 `from main import OpsAgent` 继续工作
 from core import OpsAgent  # noqa: F401
@@ -57,7 +57,7 @@ def main():
             targets_file = str(default_path)
 
     if targets_file:
-        from targets import load_targets
+        from infra.targets import load_targets
         loaded = load_targets(targets_file)
         targets = [TargetConfig.from_target(t) for t in loaded]
         if targets:
@@ -96,7 +96,7 @@ def main():
         agent.run()
     finally:
         # 确保终端状态恢复（防止 echo 丢失）
-        from chat import _restore_terminal
+        from infra.chat import _restore_terminal
         _restore_terminal()
 
 

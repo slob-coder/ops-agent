@@ -13,11 +13,11 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from state import AgentState, STATE_VERSION
-from pending_events import PendingEventQueue, PendingEvent, MAX_PENDING_EVENTS
-from health import HealthServer
-from llm import RetryingLLM, LLMDegraded, LLMInterrupted
-from notebook import Notebook
+from reliability.state import AgentState, STATE_VERSION
+from reliability.pending_events import PendingEventQueue, PendingEvent, MAX_PENDING_EVENTS
+from reliability.health import HealthServer
+from infra.llm import RetryingLLM, LLMDegraded, LLMInterrupted
+from infra.notebook import Notebook
 
 PASS = 0
 FAIL = 0
@@ -377,8 +377,8 @@ import main as ops_main
 
 class _Stub(ops_main.OpsAgent):
     def __init__(self, tmp):
-        from notebook import Notebook
-        from limits import LimitsEngine, LimitsConfig
+        from infra.notebook import Notebook
+        from safety.limits import LimitsEngine, LimitsConfig
         self._tmp = tmp
         self.notebook = Notebook(tmp)
         # toolboxes 为空 → recover_state 跳过 target switch
