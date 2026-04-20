@@ -105,7 +105,7 @@ systemctl status backend
 
 ## Notebook 目录结构
 
-你的笔记本在项目根目录的 `notebook/` 下，目录结构如下：
+你的笔记本位于 `{notebook_path}`，目录结构如下：
 
 ```
 notebook/

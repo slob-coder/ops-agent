@@ -61,6 +61,7 @@ class PromptsMixin:
             system_map=system_map or "(尚未探索,系统拓扑未知)",
             target_info=target_info,
             limits_status=limits_status,
+            notebook_path=str(self.notebook.path),
         )
 
     def _build_target_context(self) -> str:
