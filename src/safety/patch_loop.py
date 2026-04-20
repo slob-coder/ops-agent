@@ -13,11 +13,11 @@ patch_loop — 补丁生成 / 应用 / 验证的重试循环
 from __future__ import annotations
 
 import logging
-from context_limits import get_context_limits as _ctx
+from src.context_limits import get_context_limits as _ctx
 from dataclasses import dataclass
 
-from safety.patch_generator import PatchGenerator, Patch
-from safety.patch_applier import PatchApplier, VerificationResult
+from src.safety.patch_generator import PatchGenerator, Patch
+from src.safety.patch_applier import PatchApplier, VerificationResult
 
 logger = logging.getLogger("ops-agent.patch_loop")
 

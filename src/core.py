@@ -9,19 +9,19 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from infra.llm import LLMClient, LLMInterrupted, LLMDegraded
-from infra.notebook import Notebook
-from infra.tools import ToolBox, TargetConfig, CommandInterrupted
-from safety.trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
-from infra.chat import HumanChannel
+from src.infra.llm import LLMClient, LLMInterrupted, LLMDegraded
+from src.infra.notebook import Notebook
+from src.infra.tools import ToolBox, TargetConfig, CommandInterrupted
+from src.safety.trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
+from src.infra.chat import HumanChannel
 
-from agent.prompt_engine import PromptsMixin
-from agent.pipeline import PipelineMixin
-from agent.pr_workflow import PRWorkflowMixin
-from agent.human import HumanInteractionMixin
-from agent.metrics import MetricsMixin
-from agent.parsers import ParsersMixin
-from context_limits import get_context_limits, reload_context_limits
+from src.agent.prompt_engine import PromptsMixin
+from src.agent.pipeline import PipelineMixin
+from src.agent.pr_workflow import PRWorkflowMixin
+from src.agent.human import HumanInteractionMixin
+from src.agent.metrics import MetricsMixin
+from src.agent.parsers import ParsersMixin
+from src.context_limits import get_context_limits, reload_context_limits
 
 # ─── 日志配置 ───
 logging.basicConfig(

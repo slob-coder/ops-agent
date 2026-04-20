@@ -27,9 +27,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
-from repair.self_context import SelfContext
-from repair.stack_parser import StackFrame
-from infra.targets import SourceRepo
+from src.repair.self_context import SelfContext
+from src.repair.stack_parser import StackFrame
+from src.infra.targets import SourceRepo
 
 logger = logging.getLogger("ops-agent.self_repair")
 

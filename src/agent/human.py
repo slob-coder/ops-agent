@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from infra.llm import LLMDegraded
+from src.infra.llm import LLMDegraded
 
 logger = logging.getLogger("ops-agent")
 

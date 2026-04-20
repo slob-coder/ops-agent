@@ -11,17 +11,17 @@ import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from infra.git_host import (
+from src.infra.git_host import (
     GitHubClient, GitLabClient, NoopGitHost, PRStatus, PRResult, PR, make_client,
 )
-from infra.deploy_watcher import DeployWatcher, DeployStatus
-from infra.production_watcher import ProductionWatcher, WatchOutcome
-from safety.revert_generator import RevertGenerator
-from safety.limits import LimitsEngine, LimitsConfig
-from infra.targets import SourceRepo
-from safety.patch_generator import Patch
-from safety.patch_applier import VerificationResult
-from safety.patch_loop import VerifiedPatch
+from src.infra.deploy_watcher import DeployWatcher, DeployStatus
+from src.infra.production_watcher import ProductionWatcher, WatchOutcome
+from src.safety.revert_generator import RevertGenerator
+from src.safety.limits import LimitsEngine, LimitsConfig
+from src.infra.targets import SourceRepo
+from src.safety.patch_generator import Patch
+from src.safety.patch_applier import VerificationResult
+from src.safety.patch_loop import VerifiedPatch
 
 PASS = 0
 FAIL = 0

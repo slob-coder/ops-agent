@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import time
 import logging
-from context_limits import get_context_limits
+from src.context_limits import get_context_limits
 from dataclasses import dataclass
 from enum import Enum
 
-from repair.stack_parser import StackTraceParser
+from src.repair.stack_parser import StackTraceParser
 
 logger = logging.getLogger("ops-agent.production_watcher")
 

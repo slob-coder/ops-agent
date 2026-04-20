@@ -13,11 +13,11 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from reliability.state import AgentState, STATE_VERSION
-from reliability.pending_events import PendingEventQueue, PendingEvent, MAX_PENDING_EVENTS
-from reliability.health import HealthServer
-from infra.llm import RetryingLLM, LLMDegraded, LLMInterrupted
-from infra.notebook import Notebook
+from src.reliability.state import AgentState, STATE_VERSION
+from src.reliability.pending_events import PendingEventQueue, PendingEvent, MAX_PENDING_EVENTS
+from src.reliability.health import HealthServer
+from src.infra.llm import RetryingLLM, LLMDegraded, LLMInterrupted
+from src.infra.notebook import Notebook
 
 PASS = 0
 FAIL = 0

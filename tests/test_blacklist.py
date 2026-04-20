@@ -6,7 +6,7 @@
 """
 
 import sys
-from infra.tools import ToolBox, TargetConfig
+from src.infra.tools import ToolBox, TargetConfig
 
 tb = ToolBox(TargetConfig.local())
 

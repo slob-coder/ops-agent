@@ -14,13 +14,13 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from reliability.audit import AuditLog
-from infra.notifier import (
+from src.reliability.audit import AuditLog
+from src.infra.notifier import (
     NotifierConfig, NoOpNotifier, SlackNotifier, DingTalkNotifier,
     FeishuNotifier, PolicyNotifier, make_notifier,
 )
-from reporter import DailyReporter
-from reliability.health import HealthServer
+from src.reporter import DailyReporter
+from src.reliability.health import HealthServer
 
 PASS = 0
 FAIL = 0

@@ -18,7 +18,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 
-from reliability.audit import AuditLog
+from src.reliability.audit import AuditLog
 
 logger = logging.getLogger("ops-agent.reporter")
 

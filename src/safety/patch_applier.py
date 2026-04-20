@@ -27,8 +27,8 @@ import logging
 import subprocess
 from dataclasses import dataclass
 
-from safety.patch_generator import Patch
-from context_limits import get_context_limits
+from src.safety.patch_generator import Patch
+from src.context_limits import get_context_limits
 
 logger = logging.getLogger("ops-agent.patch_applier")
 

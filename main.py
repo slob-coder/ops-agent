@@ -23,7 +23,7 @@ from pathlib import Path
 from infra.tools import TargetConfig
 
 # 重新导出 OpsAgent，保证 `from main import OpsAgent` 继续工作
-from core import OpsAgent  # noqa: F401
+from src.core import OpsAgent  # noqa: F401
 
 
 def main():

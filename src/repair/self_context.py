@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-from context_limits import get_context_limits as _get_ctx
+from src.context_limits import get_context_limits as _get_ctx
 
 logger = logging.getLogger("ops-agent.self_context")
 

@@ -19,7 +19,7 @@ import logging
 import subprocess
 from dataclasses import dataclass
 
-from infra.git_host import GitHostClient, PR
+from src.infra.git_host import GitHostClient, PR
 
 logger = logging.getLogger("ops-agent.revert_generator")
 

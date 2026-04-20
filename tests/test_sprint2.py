@@ -9,9 +9,9 @@ import shutil
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from repair.stack_parser import StackTraceParser, StackFrame
-from repair.source_locator import SourceLocator
-from infra.targets import SourceRepo, Target
+from src.repair.stack_parser import StackTraceParser, StackFrame
+from src.repair.source_locator import SourceLocator
+from src.infra.targets import SourceRepo, Target
 
 PASS = 0
 FAIL = 0
