@@ -367,8 +367,8 @@ import main as ops_main
 
 class _Stub(ops_main.OpsAgent):
     def __init__(self, tmp):
-        from infra.notebook import Notebook
-        from safety.limits import LimitsEngine, LimitsConfig
+        from src.infra.notebook import Notebook
+        from src.safety.limits import LimitsEngine, LimitsConfig
         self._tmp = tmp
         self.notebook = Notebook(tmp)
         self.toolboxes = {}
@@ -388,8 +388,8 @@ class _Stub(ops_main.OpsAgent):
         self.pending_queue = None
         self.health_server = None
         # Sprint 6 components
-        from reliability.audit import AuditLog
-        from infra.notifier import NotifierConfig, NoOpNotifier, PolicyNotifier
+        from src.reliability.audit import AuditLog
+        from src.infra.notifier import NotifierConfig, NoOpNotifier, PolicyNotifier
         self.audit = AuditLog(os.path.join(tmp, "audit"))
         self._noop_n = NoOpNotifier()
         self.notifier = PolicyNotifier(

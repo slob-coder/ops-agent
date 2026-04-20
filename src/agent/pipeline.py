@@ -70,8 +70,8 @@ class PipelineMixin:
         任何失败都返回 (None, None),不影响诊断流程继续。
         """
         try:
-            from repair.stack_parser import StackTraceParser
-            from repair.source_locator import SourceLocator
+            from src.repair.stack_parser import StackTraceParser
+            from src.repair.source_locator import SourceLocator
         except Exception as e:
             logger.debug(f"sprint2 modules import failed: {e}")
             return None, None

@@ -57,7 +57,7 @@ def main():
             targets_file = str(default_path)
 
     if targets_file:
-        from infra.targets import load_targets
+        from src.infra.targets import load_targets
         loaded = load_targets(targets_file)
         targets = [TargetConfig.from_target(t) for t in loaded]
         if targets:
@@ -96,7 +96,7 @@ def main():
         agent.run()
     finally:
         # 确保终端状态恢复（防止 echo 丢失）
-        from infra.chat import _restore_terminal
+        from src.infra.chat import _restore_terminal
         _restore_terminal()
 
 

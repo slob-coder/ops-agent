@@ -372,8 +372,8 @@ import main as ops_main
 
 class _Stub(ops_main.OpsAgent):
     def __init__(self):
-        from infra.notebook import Notebook
-        from infra.chat import HumanChannel
+        from src.infra.notebook import Notebook
+        from src.infra.chat import HumanChannel
         self._tmp = tempfile.mkdtemp()
         self.notebook = Notebook(self._tmp)
         self.chat = _SilentChat()
@@ -384,10 +384,10 @@ class _Stub(ops_main.OpsAgent):
         with open(os.path.join(self._tmp, "incidents", "active", "incident-001.md"), "w") as f:
             f.write("# test\n")
         self._last_error_text = PY_TRACE
-        from safety.limits import LimitsEngine, LimitsConfig
+        from src.safety.limits import LimitsEngine, LimitsConfig
         self.limits = LimitsEngine(LimitsConfig(max_auto_merges_per_day=5))
-        from infra.deploy_watcher import DeployWatcher
-        from infra.production_watcher import ProductionWatcher
+        from src.infra.deploy_watcher import DeployWatcher
+        from src.infra.production_watcher import ProductionWatcher
         # 用快速假时钟
         self._clock = [0.0]
         def _sleep(s): self._clock[0] += s

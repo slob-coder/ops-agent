@@ -87,7 +87,7 @@ class TargetConfig:
         保持与 targets.Target 相同的 API。
         source_repos 可能是 list[dict] 或 list[SourceRepo]。
         """
-        from infra.targets import SourceRepo
+        from src.infra.targets import SourceRepo
         return [SourceRepo.from_dict(r) if isinstance(r, dict) else r
                 for r in (self.source_repos or [])]
 

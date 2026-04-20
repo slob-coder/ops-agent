@@ -726,7 +726,7 @@ class HumanInteractionMixin:
             return
 
         try:
-            from repair.self_repair import SelfRepairSession
+            from src.repair.self_repair import SelfRepairSession
         except Exception as e:
             logger.exception("SelfRepairSession 导入失败")
             self.chat.say(f"自修复模块加载失败: {e}", "warning")

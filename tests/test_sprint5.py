@@ -377,8 +377,8 @@ import main as ops_main
 
 class _Stub(ops_main.OpsAgent):
     def __init__(self, tmp):
-        from infra.notebook import Notebook
-        from safety.limits import LimitsEngine, LimitsConfig
+        from src.infra.notebook import Notebook
+        from src.safety.limits import LimitsEngine, LimitsConfig
         self._tmp = tmp
         self.notebook = Notebook(tmp)
         # toolboxes 为空 → recover_state 跳过 target switch

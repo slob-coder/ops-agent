@@ -423,7 +423,7 @@ class SelfRepairSession:
             language="python",
         )
         try:
-            from repair.source_locator import SourceLocator
+            from src.repair.source_locator import SourceLocator
             locator = SourceLocator(repos=[repo])
             result = locator.locate(frames)
             return result.locations if hasattr(result, "locations") else []

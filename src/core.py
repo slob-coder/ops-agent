@@ -84,12 +84,12 @@ class OpsAgent(
         self.tools = self.toolboxes[targets[0].name]
 
         # ── 限制引擎 ──
-        from safety.limits import LimitsEngine, LimitsConfig
+        from src.safety.limits import LimitsEngine, LimitsConfig
         limits_path = str(Path(notebook_path) / "config" / "limits.yaml")
         self.limits = LimitsEngine(LimitsConfig.from_yaml(limits_path))
 
         # ── 紧急停止 ──
-        from safety.safety import EmergencyStop
+        from src.safety.safety import EmergencyStop
         self.emergency = EmergencyStop(notebook_path)
 
         # ── 状态 ──
@@ -117,9 +117,9 @@ class OpsAgent(
         self._last_locate_result = None  # Sprint 2 在 _diagnose 中填充
         self._last_error_text = ""       # Sprint 4: 复发检测的 baseline 文本
         try:
-            from safety.patch_generator import PatchGenerator
-            from safety.patch_applier import PatchApplier
-            from safety.patch_loop import PatchLoop
+            from src.safety.patch_generator import PatchGenerator
+            from src.safety.patch_applier import PatchApplier
+            from src.safety.patch_loop import PatchLoop
             self.patch_loop = PatchLoop(
                 generator=PatchGenerator(self.llm),
                 applier=PatchApplier(),
@@ -132,8 +132,8 @@ class OpsAgent(
 
         # ── Sprint 4: PR 工作流 + 生产观察 ──
         try:
-            from infra.deploy_watcher import DeployWatcher
-            from infra.production_watcher import ProductionWatcher
+            from src.infra.deploy_watcher import DeployWatcher
+            from src.infra.production_watcher import ProductionWatcher
             self.deploy_watcher = DeployWatcher()
             self.prod_watcher = ProductionWatcher()
         except Exception as e:
@@ -146,7 +146,7 @@ class OpsAgent(
         self.last_loop_time = 0.0
         self.state_path = str(Path(notebook_path) / "state.json")
         try:
-            from reliability.pending_events import PendingEventQueue
+            from src.reliability.pending_events import PendingEventQueue
             self.pending_queue = PendingEventQueue(
                 str(Path(notebook_path) / "pending-events.jsonl")
             )
@@ -158,13 +158,13 @@ class OpsAgent(
 
         # ── Sprint 6: 可观测性 ──
         try:
-            from reliability.audit import AuditLog
+            from src.reliability.audit import AuditLog
             self.audit = AuditLog(str(Path(notebook_path) / "audit"))
         except Exception as e:
             logger.warning(f"audit init failed: {e}")
             self.audit = None
         try:
-            from infra.notifier import NotifierConfig, make_notifier, PolicyNotifier
+            from src.infra.notifier import NotifierConfig, make_notifier, PolicyNotifier
             ncfg = NotifierConfig.from_yaml(
                 str(Path(notebook_path) / "config" / "notifier.yaml")
             )
@@ -314,7 +314,7 @@ class OpsAgent(
         selfdev_path = os.environ.get("OPS_AGENT_SELFDEV_PATH", "")
         if selfdev_path:
             try:
-                from repair.self_repair import run_probation_if_pending
+                from src.repair.self_repair import run_probation_if_pending
                 run_probation_if_pending(self, selfdev_path)
             except Exception as e:
                 logger.warning(f"probation check crashed: {e}")
@@ -806,7 +806,7 @@ class OpsAgent(
 
     def _build_state_snapshot(self):
         """构造当前 AgentState"""
-        from reliability.state import AgentState
+        from src.reliability.state import AgentState
         return AgentState(
             mode=self.mode,
             current_target_name=getattr(self.current_target, "name", "") or "",
@@ -829,7 +829,7 @@ class OpsAgent(
     def recover_state(self) -> bool:
         """启动时尝试恢复上次状态。返回是否成功恢复了未完成的工作。"""
         try:
-            from reliability.state import AgentState
+            from src.reliability.state import AgentState
             prev = AgentState.load(self.state_path)
         except Exception as e:
             logger.debug(f"recover_state load failed: {e}")
