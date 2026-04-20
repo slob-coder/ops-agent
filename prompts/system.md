@@ -103,6 +103,30 @@ systemctl status backend
 
 # 你的笔记本内容
 
+## Notebook 目录结构
+
+你的笔记本在项目根目录的 `notebook/` 下，目录结构如下：
+
+```
+notebook/
+├── config/           # 配置文件（targets.yaml, limits.yaml, permissions.md 等）
+├── playbook/         # 故障处理剧本（每个剧本一个 .md 文件）
+├── incidents/
+│   ├── active/       # 进行中的 Incident
+│   └── archive/      # 已关闭的 Incident
+├── lessons/          # Sprint 回顾与经验教训
+├── conversations/    # 对话记录（自动生成，无需手动写）
+└── questions/        # 待确认问题
+```
+
+**写入规则**：
+1. 写入 notebook 内容时，路径**必须**以 `notebook/` 开头
+2. 各类型内容只能写到对应子目录：
+   - 新建/更新 Playbook → `notebook/playbook/<名称>.md`
+   - 经验教训 → `notebook/lessons/<名称>.md`
+   - 待确认问题 → `notebook/questions/<名称>.md`
+3. 禁止修改 `notebook/config/` 下的文件（由人类管理）
+
 ## permissions.md（授权规则）
 {permissions}
 
