@@ -20,7 +20,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from infra.tools import TargetConfig
+from src.infra.tools import TargetConfig
 
 # 重新导出 OpsAgent，保证 `from main import OpsAgent` 继续工作
 from src.core import OpsAgent  # noqa: F401
