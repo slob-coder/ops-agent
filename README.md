@@ -4,7 +4,7 @@
 >
 > 它不是监控系统,不是日志管道,是一个**会用 Shell、会记笔记、会跟你商量、会自己修代码的数字同事**。
 
-**当前版本: v1.0** — 5 个 Sprint 全部完成,493 项测试覆盖.
+**当前版本: v2.0** — 6 个 Sprint + 状态机重构完成,493 项测试覆盖.
 
 完整能力:多目标管理 · 自主诊断修复 · 源码 bug 自动修复 · PR 自动合并与生产观察 · 崩溃自恢复 · LLM 降级 · 审计/Metrics/IM 通知/日报.
 
@@ -134,36 +134,55 @@ curl localhost:9876/metrics   # Prometheus 格式 metrics
 
 ```
 ops-agent/
-├── main.py                    # 主循环
-├── llm.py                     # LLM 抽象层(含 RetryingLLM 降级包装)
-├── notebook.py                # Notebook 读写 + git 完整性
-├── tools.py                   # 命令执行工具箱(SSH/Docker/K8s/Local)
-├── targets.py                 # 多目标 + SourceRepo 配置
-├── chat.py                    # 人机交互通道
-├── trust.py                   # 信任度引擎
-├── safety.py                  # 紧急停止开关
-├── limits.py                  # 爆炸半径限制
-├── state.py                   # 崩溃恢复状态持久化       [Sprint 5]
-├── pending_events.py          # 待处理事件队列            [Sprint 5]
-├── health.py                  # 健康检查端点 + /metrics    [Sprint 5/6]
-├── audit.py                   # append-only 审计日志       [Sprint 6]
-├── notifier.py                # IM 通知 (Slack/钉钉/飞书)  [Sprint 6]
-├── reporter.py                # 每日健康报告               [Sprint 6]
+├── main.py                       # 入口,解析参数,启动 OpsAgent
+├── src/
+│   ├── core.py                   # OpsAgent 类,主循环 + 状态机
+│   ├── context_limits.py         # 上下文窗口限制配置
+│   ├── reporter.py               # 每日健康报告
+│   │
+│   ├── agent/                    # 思考层 — Mixin
+│   │   ├── pipeline.py           # OODA 流水线(observe/assess/diagnose/plan/execute/verify/reflect)
+│   │   ├── parsers.py            # JSON 解析、命令提取、targeted observe
+│   │   ├── prompt_engine.py      # Prompt 模板加载/填充
+│   │   ├── human.py              # 人类消息处理、自由对话、协作模式
+│   │   ├── metrics.py            # Prometheus metrics mixin
+│   │   └── pr_workflow.py        # PR 创建/合并/观察 mixin
+│   │
+│   ├── infra/                    # 感知层 + 行动层
+│   │   ├── tools.py              # 命令执行(SSH/Docker/K8s/Local)
+│   │   ├── targets.py            # 多目标 + SourceRepo 配置
+│   │   ├── chat.py               # 终端交互(prompt_toolkit)
+│   │   ├── llm.py                # LLM 抽象层(含 RetryingLLM 降级)
+│   │   ├── notebook.py           # Notebook 读写 + git 完整性
+│   │   ├── deploy_watcher.py     # 部署信号监听
+│   │   ├── production_watcher.py # 复发检测
+│   │   ├── notifier.py           # IM 通知(Slack/钉钉/飞书)
+│   │   └── git_host.py           # GitHub/GitLab CLI 抽象
+│   │
+│   ├── safety/                   # 安全与约束
+│   │   ├── trust.py              # 信任度引擎 + ActionPlan
+│   │   ├── safety.py             # 紧急停止开关 + 命令黑名单
+│   │   ├── limits.py             # 爆炸半径限制
+│   │   ├── patch_generator.py    # LLM 补丁生成
+│   │   ├── patch_applier.py      # git 应用 + 编译 + 测试
+│   │   ├── patch_loop.py         # 重试循环(最多 3 次)
+│   │   └── revert_generator.py   # 自动 revert
+│   │
+│   ├── repair/                   # 自修复与源码定位
+│   │   ├── self_repair.py        # 自修复系统
+│   │   ├── self_context.py       # 自修复上下文收集
+│   │   ├── source_locator.py     # 异常 → 源码反向定位
+│   │   └── stack_parser.py       # 多语言 traceback 解析
+│   │
+│   └── reliability/              # 可靠性基础
+│       ├── state.py              # 崩溃恢复状态持久化
+│       ├── pending_events.py     # 待处理事件队列
+│       ├── health.py             # 健康检查端点 + /metrics
+│       └── audit.py              # append-only 审计日志
 │
-│ ── 源码修复流水线 ──────────────────────────────
-├── stack_parser.py            # 多语言 traceback 解析     [Sprint 2]
-├── source_locator.py          # 异常 → 源码反向定位       [Sprint 2]
-├── patch_generator.py         # LLM 补丁生成              [Sprint 3]
-├── patch_applier.py           # git 应用 + 编译 + 测试     [Sprint 3]
-├── patch_loop.py              # 重试循环                  [Sprint 3]
-├── git_host.py                # GitHub/GitLab CLI 抽象    [Sprint 4]
-├── deploy_watcher.py          # 部署信号监听              [Sprint 4]
-├── production_watcher.py     # 复发检测                  [Sprint 4]
-├── revert_generator.py        # 自动 revert               [Sprint 4]
-│
-├── prompts/                   # 8 个核心 prompt 模板
-├── templates/pr-body.md       # PR 描述模板               [Sprint 4]
-├── notebook/                  # Agent 的笔记本(git 仓库)
+├── prompts/                      # 7 个核心 prompt 模板
+├── templates/pr-body.md          # PR 描述模板
+├── notebook/                     # Agent 的笔记本(git 仓库)
 │   ├── config/
 │   │   ├── targets.yaml
 │   │   ├── permissions.md
@@ -173,11 +192,11 @@ ops-agent/
 │   ├── incidents/
 │   ├── lessons/
 │   └── audit/
-├── ops-agent.service          # systemd unit             [Sprint 5]
+├── tests/                        # 10 个测试文件
+├── ops-agent.service             # systemd unit
 ├── scripts/
-│   ├── watchdog.sh            # 外部健康看门狗            [Sprint 5]
-│   └── install.sh             # 一键安装                  [Sprint 5]
-├── test_*.py                  # 8 个测试文件,共 493 项
+│   ├── watchdog.sh               # 外部健康看门狗
+│   └── install.sh                # 一键安装
 └── README.md / USER_GUIDE.md
 ```
 
@@ -202,6 +221,7 @@ ops-agent/
 
 ```bash
 # 运行所有测试(无需配置 LLM,全部 stdlib stub)
+cd tests
 for t in test_basic test_blacklist test_sprint1 test_sprint2 \
          test_sprint3 test_sprint4 test_sprint5 test_sprint6; do
     python $t.py

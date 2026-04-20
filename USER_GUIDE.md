@@ -1,6 +1,6 @@
 # OpsAgent 使用指南
 
-> 版本: v1.0  ·  适用范围: 5 个 Sprint 全部完成后的 OpsAgent
+> 版本: v2.0  ·  适用范围: 6 个 Sprint + 状态机重构完成后的 OpsAgent
 >
 > 本指南覆盖从首次部署到生产运维的全流程.如果你只想快速跑起来,看 [README.md](./README.md) 的"快速开始"即可.
 
@@ -227,7 +227,7 @@ targets:
 - 修改 /etc/passwd / /etc/shadow
 ```
 
-Agent 在 plan 阶段会读取这个文件,LLM 自己判断当前 action 落在哪一档.黑名单(L4)由 `safety.py` 硬编码兜底,无论 LLM 怎么说都拦截.
+Agent 在 plan 阶段会读取这个文件,LLM 自己判断当前 action 落在哪一档.黑名单(L4)由 `src/safety/safety.py` 硬编码兜底,无论 LLM 怎么说都拦截.
 
 ### 2.5 爆炸半径 limits.yaml
 
@@ -645,7 +645,7 @@ cat notebook/audit/2026-04-10.jsonl | jq -r .type | sort | uniq -c
 也可以在代码里:
 
 ```python
-from audit import AuditLog
+from src.reliability.audit import AuditLog
 log = AuditLog("notebook/audit")
 events = log.read_day("2026-04-10")
 counts = log.count_by_type()
@@ -726,7 +726,7 @@ kill -USR1 $(pgrep -f ops-agent)
 - `DROP DATABASE` / `DROP TABLE` / `TRUNCATE`
 - `shutdown` / `reboot` / `halt` / `poweroff`
 - `chown -R / *` / `chmod -R 777 /`
-- ...完整列表见 `safety.py`
+- ...完整列表见 `src/safety/safety.py`
 
 ---
 
@@ -773,7 +773,7 @@ class GiteaClient(GitHostClient):
     def merge_pr(self, repo_path, pr_number): ...
     def get_pr_status(self, repo_path, pr_number): ...
 
-# 注册到工厂
+# 注册到工厂 (src/infra/git_host.py)
 def make_client(host_type, run=None):
     ...
     if host_type == "gitea":
@@ -792,7 +792,7 @@ class TeamsNotifier(_HTTPNotifier):
         }
         return self._post(payload)
 
-# 注册到工厂
+# 注册到工厂 (src/infra/notifier.py)
 def make_notifier(config, http_fn=None):
     ...
     if t == "teams":
@@ -939,18 +939,18 @@ llm_tokens_per_day: 1000000     # 触发后强制升级所有动作
 
 ### 多副本部署(谨慎)
 
-**当前 v1.0 是单进程假设**,以下组件不是分布式安全的:
+**当前 v2.0 是单进程假设**,以下组件不是分布式安全的:
 
 - `state.json` — 单文件,多进程会互相覆盖
 - `pending_events.jsonl` — append-only 但 pop 时 rewrite 有竞态
-- `LimitsEngine` — 内存 deque,多副本独立计数
+- `LimitsEngine`(`src/safety/limits.py`) — 内存 deque,多副本独立计数
 - `auto_merge_timestamps` — 同上
 
 如果必须 HA 部署,要么:
 1. **主备模式**:一主一备,备机 readonly,主机崩溃时手动切
 2. **重新设计共享存储层**:把上述四项落到 redis / etcd
 
-不推荐"双活"直接部署 v1.0.
+不推荐"双活"直接部署 v2.0.
 
 ---
 
