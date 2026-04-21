@@ -298,7 +298,7 @@ class HumanInteractionMixin:
             self.chat.say(f"LLM 调用出错: {e}", "warning")
             return
 
-        commands = self._extract_commands(response)
+        commands = self._extract_commands(response, allow_fallback=False)
 
         if commands:
             # 清除本次消息触发的中断标志，避免自己的输入导致命令被跳过
@@ -366,7 +366,7 @@ class HumanInteractionMixin:
                     return
 
                 # 检查 LLM 是否还要继续执行命令
-                commands = self._extract_commands(followup_response)
+                commands = self._extract_commands(followup_response, allow_fallback=False)
                 if not commands:
                     # 没有更多命令，提取最终结论
                     text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", followup_response, flags=re.DOTALL).strip()
@@ -561,7 +561,7 @@ class HumanInteractionMixin:
 
             # ─── 解析意图标记 ───
             intent, clean_response = self._parse_collab_intent(response)
-            commands = self._extract_commands(clean_response)
+            commands = self._extract_commands(clean_response, allow_fallback=False)
 
             # 展示文本部分（去掉命令块）
             text_part = re.sub(

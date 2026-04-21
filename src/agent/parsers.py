@@ -16,12 +16,15 @@ class ParsersMixin:
 
     # ─── 通用工具 ───
 
-    def _extract_commands(self, text: str) -> list:
-        """从 LLM 输出中提取命令列表（observe/assess/reflect 仍在用）"""
+    def _extract_commands(self, text: str, allow_fallback: bool = True) -> list:
+        """从 LLM 输出中提取命令列表
+
+        allow_fallback=False 时只匹配 commands 块，不匹配 bash/shell/sh。
+        用于 free_chat 等场景，避免 LLM 展示代码片段被误执行。
+        """
         commands = []
 
-        # 只匹配 ```commands ... ``` 块，不匹配 bash/shell/sh
-        # bash/shell 块通常是 LLM 展示代码片段，不是要执行的命令
+        # 只匹配 ```commands ... ``` 块
         blocks = re.findall(r"```commands\s*\n(.*?)```", text, re.DOTALL)
         for block in blocks:
             for line in block.strip().split("\n"):
@@ -30,7 +33,7 @@ class ParsersMixin:
                     commands.append(line)
 
         # 如果没有 commands 块，再尝试匹配 bash/shell/sh 块（兼容旧 observe/assess prompt）
-        if not commands:
+        if not commands and allow_fallback:
             blocks = re.findall(r"```(?:bash|shell|sh)\s*\n(.*?)```", text, re.DOTALL)
             for block in blocks:
                 for line in block.strip().split("\n"):
