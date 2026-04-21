@@ -288,6 +288,10 @@ class HumanInteractionMixin:
 - 结合上面的上下文来理解人类的问题
 - 只输出真正需要执行的命令
 - 如果是修改类操作（L2+），先说明你打算做什么，等批准
+
+判断任务类型：
+- 如果是一次性查询或简单操作（查状态、看日志、单条命令）→ 正常输出 commands
+- 如果需要多步自主执行（排查问题、修复故障、需要观察-判断-再行动）→ 在 commands 块第一行写 AUTONOMOUS，我会自主执行完成后汇报
 """
 
         try:
@@ -301,6 +305,12 @@ class HumanInteractionMixin:
         commands = self._extract_commands(response)
 
         if commands:
+            # 判断是否是多步自主任务
+            if commands[0].strip() == "AUTONOMOUS":
+                commands = commands[1:]  # 去掉标记
+                self._enter_autonomous_task(msg, commands)
+                return
+
             # 清除本次消息触发的中断标志，避免自己的输入导致命令被跳过
             # 只有在命令执行期间有 *新的* 人类输入才应触发中断
             self.chat.clear_interrupt()
@@ -355,6 +365,25 @@ class HumanInteractionMixin:
             self.notebook.log_conversation("Agent", reply)
 
             self.chat.say(reply)
+
+    def _enter_autonomous_task(self, task_description: str, initial_commands: list = None):
+        """进入自主任务模式 — 多步执行完成后汇报，复用 incident 机制"""
+        self.chat.say(f"收到，开始自主执行: {task_description}", "info")
+
+        # 如果已有活跃 incident，不重复创建
+        if not self.current_incident:
+            self.current_incident = self.notebook.create_incident(task_description)
+            self.chat._trace_file = self.current_incident
+            self.mode = self.INVESTIGATE
+
+        # 如果有初始命令，先执行
+        if initial_commands:
+            for cmd in initial_commands[:self.limits.config.max_chat_commands]:
+                self.chat.log(f"执行: {cmd}")
+                self._run_cmd(cmd, timeout=20)
+
+        # 回到主循环，incident_loop 会自动接管后续的 observe → diagnose → ... → reflect
+        self.notebook.log_conversation("Agent", f"开始自主任务: {task_description}")
 
     # ═══════════════════════════════════════════
     #  协作排查模式
