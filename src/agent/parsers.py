@@ -294,6 +294,19 @@ class ParsersMixin:
                 self.notebook.append(f"playbook/{filename}", f"\n{content}")
                 self.chat.say(f"更新了 Playbook: {filename}", "success")
 
+        # 解析 LESSON 指令
+        lesson_match = re.search(r'LESSON:\s*(.+)', reflect_response)
+        if lesson_match and self.current_incident:
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d")
+            lesson_text = lesson_match.group(1).strip()
+            incident_title = self.notebook.read_incident(self.current_incident).split('\n')[0]
+            self.notebook.write(
+                f"lessons/{ts}-{self.current_incident[:10]}.md",
+                f"# {incident_title.replace('Incident:', '教训:')}\n\n{lesson_text}\n"
+            )
+            self.chat.say(f"记录了经验教训", "success")
+
     # ─── 辅助方法（不变）───
 
     def _classify_action(self, action_text: str) -> str:

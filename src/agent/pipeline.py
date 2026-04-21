@@ -128,7 +128,7 @@ class PipelineMixin:
         )
         playbook_content = ""
         for f in relevant_files:
-            if "playbook" in f:
+            if "playbook" in f or "lesson" in f:
                 playbook_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.playbook_content_chars]}\n"
 
         # 搜索历史 Incident
@@ -244,7 +244,7 @@ class PipelineMixin:
         relevant_files = self.notebook.find_relevant(hypothesis)
         playbook = ""
         for f in relevant_files:
-            if "playbook" in f:
+            if "playbook" in f or "lesson" in f:
                 playbook += self.notebook.read(f) + "\n"
 
         # 提取构建/部署配置
