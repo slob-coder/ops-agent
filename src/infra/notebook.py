@@ -3,6 +3,7 @@ Notebook — Agent 的记忆
 一个 git 仓库，里面全是 markdown，Agent 自己读自己写，人类也能读写。
 """
 
+import re
 import subprocess
 import logging
 from pathlib import Path
@@ -179,6 +180,73 @@ class Notebook:
             # 可能已归档
             content = self.read(f"incidents/archive/{filename}")
         return content
+
+
+    # ── 成长更新 ──
+
+    def update_readme_growth(self):
+        """reflect 后调用，更新 notebook/README.md 的状态数据"""
+        readme = self.path / "README.md"
+        if not readme.exists():
+            return
+
+        text = readme.read_text(encoding="utf-8")
+
+        incidents_active = list((self.path / "incidents/active").glob("*.md"))
+        incidents_archive = list((self.path / "incidents/archive").glob("*.md"))
+        incidents = incidents_active + incidents_archive
+        playbooks = list((self.path / "playbook").glob("*.md"))
+        lessons = list((self.path / "lessons").glob("*.md"))
+
+        self_fixed = 0
+        for i in incidents:
+            try:
+                if "自主修复" in i.read_text(encoding="utf-8"):
+                    self_fixed += 1
+            except Exception:
+                pass
+
+        born_match = re.search(r'入职日期\s+(\d{4}-\d{2}-\d{2})', text)
+        if born_match:
+            born_date = datetime.strptime(born_match.group(1), "%Y-%m-%d")
+            uptime_days = (datetime.now() - born_date).days
+        else:
+            uptime_days = 0
+
+        xp = len(incidents) * 10 + self_fixed * 20
+        level = self._calc_level(xp)
+
+        new_block = (
+            "# 当前状态\n"
+            f"- 模式：巡检（patrol）\n"
+            f"- 成长层级：{level}\n"
+            f"- 已处理 Incident：{len(incidents)} 个\n"
+            f"- 自主成功：{self_fixed} 个\n"
+            f"- 积累 Playbook：{len(playbooks)} 个\n"
+            f"- 积累教训：{len(lessons)} 条\n"
+            f"- 上岗天数：{uptime_days} 天"
+        )
+
+        text = re.sub(
+            r'# 当前状态\n(?:- .+\n)*',
+            new_block + '\n',
+            text, count=1,
+        )
+
+        readme.write_text(text, encoding="utf-8")
+        logger.info(f"Updated README growth: {level}, {len(incidents)} incidents, {self_fixed} self-fixed")
+
+    def _calc_level(self, xp):
+        thresholds = [
+            (4000, "L5 专家"),
+            (1500, "L4 老兵"),
+            (500, "L3 熟手"),
+            (100, "L2 学徒"),
+        ]
+        for threshold, name in thresholds:
+            if xp >= threshold:
+                return name
+        return "L1 新人"
 
     # ── Sprint 5: 完整性校验与远端备份 ──
 

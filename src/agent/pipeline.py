@@ -384,6 +384,9 @@ class PipelineMixin:
         # 解析 Playbook 更新指令
         self._apply_reflect_updates(response)
 
+        # 更新 README 成长数据
+        self.notebook.update_readme_growth()
+
     def _close_incident(self, summary: str):
         """关闭并归档 Incident"""
         if self.current_incident:
