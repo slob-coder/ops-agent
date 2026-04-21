@@ -392,7 +392,6 @@ class PipelineMixin:
         if self.current_incident:
             self._emit_audit("incident_closed", incident=self.current_incident, summary=summary[:200])
             self.notebook.close_incident(self.current_incident, summary)
-            self.chat.say(f"✅ 任务完成: {summary}", "success")
             self.current_incident = None
             self.chat._trace_file = "patrol"  # trace 恢复到默认
             self.limits.record_incident_end()

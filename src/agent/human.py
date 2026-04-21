@@ -288,10 +288,6 @@ class HumanInteractionMixin:
 - 结合上面的上下文来理解人类的问题
 - 只输出真正需要执行的命令
 - 如果是修改类操作（L2+），先说明你打算做什么，等批准
-
-判断任务类型：
-- 如果是一次性查询或简单操作（查状态、看日志、单条命令）→ 正常输出 commands
-- 如果需要多步自主执行（排查问题、修复故障、需要观察-判断-再行动）→ 在 commands 块第一行写 AUTONOMOUS，我会自主执行完成后汇报
 """
 
         try:
@@ -305,12 +301,6 @@ class HumanInteractionMixin:
         commands = self._extract_commands(response)
 
         if commands:
-            # 多步任务自动识别：如果消息语义是排查/分析类任务，
-            # 则转入自主执行模式，而非一步步等人类确认
-            if not self._is_simple_query(msg):
-                self._enter_autonomous_task(msg, commands)
-                return
-
             # 清除本次消息触发的中断标志，避免自己的输入导致命令被跳过
             # 只有在命令执行期间有 *新的* 人类输入才应触发中断
             self.chat.clear_interrupt()
@@ -365,49 +355,6 @@ class HumanInteractionMixin:
             self.notebook.log_conversation("Agent", reply)
 
             self.chat.say(reply)
-
-    def _enter_autonomous_task(self, task_description: str, initial_commands: list = None):
-        """进入自主任务模式 — 多步执行完成后汇报，复用 incident 机制"""
-        self.chat.say(f"收到，开始自主执行: {task_description}", "info")
-
-        # 如果已有活跃 incident，不重复创建
-        if not self.current_incident:
-            self.current_incident = self.notebook.create_incident(task_description)
-            self.chat._trace_file = self.current_incident
-            self.mode = self.INVESTIGATE
-
-        # 如果有初始命令，先执行
-        if initial_commands:
-            for cmd in initial_commands[:self.limits.config.max_chat_commands]:
-                self.chat.log(f"执行: {cmd}")
-                self._run_cmd(cmd, timeout=20)
-
-        # 回到主循环，incident_loop 会自动接管后续的 observe → diagnose → ... → reflect
-        self.notebook.log_conversation("Agent", f"开始自主任务: {task_description}")
-
-    def _is_simple_query(self, msg: str) -> bool:
-        """判断是否是简单查询（查状态、看信息），不需要多步自主执行。
-        默认不是简单查询——带命令输出的消息多半需要多步分析。"""
-        lower = msg.lower()
-        # 明确的简单查询关键词
-        simple_keywords = (
-            "status", "版本", "version", "whoami", "hostname", "uptime",
-        )
-        # 明确的排查/分析关键词 → 一定不是简单查询
-        complex_keywords = (
-            "分析", "排查", "为什么", "什么原因", "怎么回事", "诊断",
-            "调查", "排查", "修复", "解决", "analyzer", "diagnos",
-            "investigat", "troubleshoot", "fix", "resolve", "debug",
-        )
-        if any(kw in lower for kw in complex_keywords):
-            return False
-        # 短消息且不含命令/日志 = 可能是简单问题
-        if len(msg) < 20 and "$" not in msg and "HTTP" not in msg:
-            return True
-        if any(kw in lower for kw in simple_keywords) and len(msg) < 40:
-            return True
-        # 包含日志、报错等 = 需要分析
-        return False
 
     # ═══════════════════════════════════════════
     #  协作排查模式
