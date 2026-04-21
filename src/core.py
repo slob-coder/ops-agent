@@ -173,7 +173,7 @@ class OpsAgent(
             logger.warning(f"notifier init failed: {e}")
             self.notifier = None
         try:
-            from reporter import DailyReporter
+            from src.reporter import DailyReporter
             self.reporter = DailyReporter(
                 audit=self.audit, llm=self.llm,
                 notifier=self.notifier, limits=self.limits,
