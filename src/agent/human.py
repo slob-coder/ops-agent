@@ -305,9 +305,9 @@ class HumanInteractionMixin:
         commands = self._extract_commands(response)
 
         if commands:
-            # 判断是否是多步自主任务
-            if commands[0].strip() == "AUTONOMOUS":
-                commands = commands[1:]  # 去掉标记
+            # 多步任务自动识别：如果消息语义是排查/分析类任务，
+            # 则转入自主执行模式，而非一步步等人类确认
+            if not self._is_simple_query(msg):
                 self._enter_autonomous_task(msg, commands)
                 return
 
@@ -384,6 +384,30 @@ class HumanInteractionMixin:
 
         # 回到主循环，incident_loop 会自动接管后续的 observe → diagnose → ... → reflect
         self.notebook.log_conversation("Agent", f"开始自主任务: {task_description}")
+
+    def _is_simple_query(self, msg: str) -> bool:
+        """判断是否是简单查询（查状态、看信息），不需要多步自主执行。
+        默认不是简单查询——带命令输出的消息多半需要多步分析。"""
+        lower = msg.lower()
+        # 明确的简单查询关键词
+        simple_keywords = (
+            "status", "版本", "version", "whoami", "hostname", "uptime",
+        )
+        # 明确的排查/分析关键词 → 一定不是简单查询
+        complex_keywords = (
+            "分析", "排查", "为什么", "什么原因", "怎么回事", "诊断",
+            "调查", "排查", "修复", "解决", "analyzer", "diagnos",
+            "investigat", "troubleshoot", "fix", "resolve", "debug",
+        )
+        if any(kw in lower for kw in complex_keywords):
+            return False
+        # 短消息且不含命令/日志 = 可能是简单问题
+        if len(msg) < 20 and "$" not in msg and "HTTP" not in msg:
+            return True
+        if any(kw in lower for kw in simple_keywords) and len(msg) < 40:
+            return True
+        # 包含日志、报错等 = 需要分析
+        return False
 
     # ═══════════════════════════════════════════
     #  协作排查模式
