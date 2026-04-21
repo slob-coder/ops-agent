@@ -50,7 +50,7 @@ source_context_trace_chars: 2000
 
 # 诊断 JSON 摘要传入 plan prompt 的最大字符数
 # 在 _summarize_observations 中用于压缩历史诊断结论
-diagnosis_json_chars: 500
+diagnosis_json_chars: 700
 
 # 上轮观测摘要的最大字符数（多轮 COLLECT_MORE 时的历史压缩）
 prev_summary_chars: 1000
