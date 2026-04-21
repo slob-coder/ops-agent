@@ -390,6 +390,7 @@ class PipelineMixin:
     def _close_incident(self, summary: str):
         """关闭并归档 Incident"""
         if self.current_incident:
+            self._emit_audit("incident_closed", incident=self.current_incident, summary=summary[:200])
             self.notebook.close_incident(self.current_incident, summary)
             self.current_incident = None
             self.chat._trace_file = "patrol"  # trace 恢复到默认

@@ -170,7 +170,9 @@ class PromptsMixin:
 
     def _run_cmd(self, cmd: str, timeout: int = 30):
         """统一的命令执行入口，自动接入中断检查"""
-        return self.tools.run(
+        result = self.tools.run(
             cmd, timeout=timeout,
             interrupt_check=self._interrupt_check,
         )
+        self._emit_audit("cmd_executed", cmd=cmd[:200], exit_code=result.returncode)
+        return result

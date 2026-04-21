@@ -506,6 +506,8 @@ class OpsAgent(
         fix_verified = False
         self._obs_summary = ""  # 每个 incident 重置滚动摘要
 
+        self._emit_audit("incident_opened", target=self.current_target.name if self.current_target else "")
+
         max_total_rounds = self.limits.config.max_total_rounds
         diagnose_rounds = 0       # 诊断轮次计数
         fix_attempts = 0          # 修复尝试计数
