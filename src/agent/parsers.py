@@ -20,13 +20,23 @@ class ParsersMixin:
         """从 LLM 输出中提取命令列表（observe/assess/reflect 仍在用）"""
         commands = []
 
-        # 匹配 ```commands ... ``` 块
-        blocks = re.findall(r"```(?:commands|bash|shell|sh)?\s*\n(.*?)```", text, re.DOTALL)
+        # 只匹配 ```commands ... ``` 块，不匹配 bash/shell/sh
+        # bash/shell 块通常是 LLM 展示代码片段，不是要执行的命令
+        blocks = re.findall(r"```commands\s*\n(.*?)```", text, re.DOTALL)
         for block in blocks:
             for line in block.strip().split("\n"):
                 line = line.strip()
                 if line and not line.startswith("#"):
                     commands.append(line)
+
+        # 如果没有 commands 块，再尝试匹配 bash/shell/sh 块（兼容旧 observe/assess prompt）
+        if not commands:
+            blocks = re.findall(r"```(?:bash|shell|sh)\s*\n(.*?)```", text, re.DOTALL)
+            for block in blocks:
+                for line in block.strip().split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        commands.append(line)
 
         # 如果没有代码块，尝试匹配 STEP N: 格式
         if not commands:
