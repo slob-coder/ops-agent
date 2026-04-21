@@ -304,23 +304,45 @@ class HumanInteractionMixin:
             # 清除本次消息触发的中断标志，避免自己的输入导致命令被跳过
             # 只有在命令执行期间有 *新的* 人类输入才应触发中断
             self.chat.clear_interrupt()
-            self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
-            cmd_results = []
-            for cmd in commands[:self.limits.config.max_chat_commands]:
-                if self.chat.is_interrupted():
-                    self.chat.say("收到新指令，停止当前任务。", "info")
-                    return
-                self.chat.log(f"执行: {cmd}")
-                result = self._run_cmd(cmd, timeout=20)
-                cmd_results.append(str(result))
 
-            # 构建命令结果摘要
-            results_summary = "\n".join(
-                f"$ {cmd}\n{result}"
-                for cmd, result in zip(commands[:len(cmd_results)], cmd_results)
-            )
+            max_rounds = 20
+            all_round_results = []  # 每轮的命令结果摘要
+            final_reply = ""
 
-            followup = f"""刚才的问题是：{msg}
+            for round_num in range(1, max_rounds + 1):
+                if round_num == 1:
+                    self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
+                else:
+                    self.chat.say(f"继续执行 (第 {round_num} 轮)...")
+
+                cmd_results = []
+                for cmd in commands[:self.limits.config.max_chat_commands]:
+                    if self.chat.is_interrupted():
+                        self.chat.say("收到新指令，停止当前任务。", "info")
+                        return
+                    self.chat.log(f"执行: {cmd}")
+                    result = self._run_cmd(cmd, timeout=20)
+                    cmd_results.append(str(result))
+
+                # 本轮结果摘要
+                round_summary = "\n".join(
+                    f"$ {cmd}\n{result}"
+                    for cmd, result in zip(commands[:len(cmd_results)], cmd_results)
+                )
+                all_round_results.append(round_summary)
+
+                # 滚动窗口：只保留最近 10 条，之前的压缩
+                if len(all_round_results) > 10:
+                    display_results = (
+                        ["（已省略之前的执行结果）"]
+                        + all_round_results[-10:]
+                    )
+                else:
+                    display_results = all_round_results
+
+                results_summary = "\n".join(display_results)
+
+                followup = f"""刚才的问题是：{msg}
 
 ## 上下文
 {context}
@@ -328,24 +350,41 @@ class HumanInteractionMixin:
 ## 对话历史
 {history_text}
 
-执行了以下命令，结果如下：
+## 执行历史
 {results_summary}
 
-请基于上下文和命令结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。"""
-            try:
-                final = self._ask_llm(followup, allow_interrupt=False)
-            except LLMDegraded:
-                raise
-            except Exception as e:
-                self.chat.say(f"LLM 调用出错: {e}", "warning")
-                return
+请基于上下文和命令结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。
 
-            # 记录 Agent 回复（含命令+结果+最终回答）到内存历史和 notebook
-            agent_record = f"执行命令: {', '.join(commands[:len(cmd_results)])}\n结论: {final}"
+如果还需要执行更多命令来完成任务，用 commands 块输出。如果已经可以给出最终结论，直接回答即可。"""
+
+                try:
+                    followup_response = self._ask_llm(followup, allow_interrupt=False)
+                except LLMDegraded:
+                    raise
+                except Exception as e:
+                    self.chat.say(f"LLM 调用出错: {e}", "warning")
+                    return
+
+                # 检查 LLM 是否还要继续执行命令
+                commands = self._extract_commands(followup_response)
+                if not commands:
+                    # 没有更多命令，提取最终结论
+                    text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", followup_response, flags=re.DOTALL).strip()
+                    final_reply = text or followup_response
+                    break
+
+            if not final_reply:
+                final_reply = f"已执行 {max_rounds} 轮，任务可能尚未完成。以下是当前结论：\n"
+                text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", followup_response, flags=re.DOTALL).strip()
+                final_reply += text or followup_response
+
+            # 记录 Agent 回复到内存历史和 notebook
+            total_cmds = sum(len(r) for r in all_round_results)
+            agent_record = f"执行 {len(all_round_results)} 轮共 {total_cmds} 条命令\n结论: {final_reply}"
             self._free_chat_history.append({"role": "agent", "content": agent_record})
             self.notebook.log_conversation("Agent", agent_record)
 
-            self.chat.say(final)
+            self.chat.say(final_reply)
         else:
             text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", response, flags=re.DOTALL).strip()
             reply = text or response
