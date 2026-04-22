@@ -296,9 +296,16 @@ class PipelineMixin:
 
         return "\n".join(lines)
 
-    def _execute(self, plan) -> str:
-        """执行修复动作 — 按 plan.steps 逐步执行"""
+    def _execute(self, plan) -> tuple:
+        """执行修复动作 — 按 plan.steps 逐步执行
+
+        Returns:
+            (result_text: str, all_success: bool)
+        """
         results = []
+        all_success = True
+        max_timeout_retries = 2  # 超时最多重试 2 次（共 3 次尝试）
+
         for i, step in enumerate(plan.steps, 1):
             cmd = step.get("command", "")
             purpose = step.get("purpose", "")
@@ -308,16 +315,61 @@ class PipelineMixin:
                 continue
 
             self.chat.trace("EXECUTE", f"STEP {i}: {cmd} ({purpose})")
-            result = self._run_cmd(cmd)
+
+            # 超时重试机制：首次用默认 timeout，超时后逐步加倍重试
+            base_timeout = 30
+            result = None
+            for attempt in range(1, max_timeout_retries + 2):  # 1 + max_timeout_retries
+                timeout = base_timeout * (2 ** (attempt - 1))  # 30, 60, 120...
+                result = self._run_cmd(cmd, timeout=timeout)
+
+                # 判断是否超时：returncode 为特定值或输出包含 timeout 关键字
+                is_timeout = (
+                    result.returncode == -1
+                    or "timeout" in str(result).lower()
+                    or "timed out" in str(result).lower()
+                )
+                if not is_timeout or attempt > max_timeout_retries:
+                    break
+
+                logger.warning(
+                    f"Step {i} timed out (attempt {attempt}/{max_timeout_retries + 1}, "
+                    f"timeout={timeout}s), retrying with longer timeout..."
+                )
+                self.chat.progress(
+                    f"步骤 {i} 超时 (尝试 {attempt}/{max_timeout_retries + 1})，延长超时重试..."
+                )
+
             results.append(f"STEP {i}: {cmd}\n{str(result)}")
 
             if not result.success:
                 logger.warning(f"Step {i} failed: {cmd}")
+                all_success = False
                 break
 
             if wait > 0:
                 self.chat.progress(f"步骤 {i} 完成，等待 {wait}s...")
                 self._interruptible_sleep(wait)
+
+        return "\n\n".join(results), all_success
+
+    def _execute_rollback(self, plan) -> str:
+        """执行回滚步骤 — 逐步执行 plan.rollback_steps"""
+        results = []
+        for i, step in enumerate(plan.rollback_steps, 1):
+            cmd = step.get("command", "") if isinstance(step, dict) else str(step)
+            purpose = step.get("purpose", "") if isinstance(step, dict) else ""
+
+            if not cmd:
+                continue
+
+            self.chat.trace("ROLLBACK", f"STEP {i}: {cmd} ({purpose})")
+            result = self._run_cmd(cmd, timeout=30)
+            results.append(f"ROLLBACK STEP {i}: {cmd}\n{str(result)}")
+
+            if not result.success:
+                logger.warning(f"Rollback step {i} failed: {cmd}")
+                # 回滚失败继续执行后续步骤，尽力恢复
 
         return "\n\n".join(results)
 
