@@ -722,7 +722,7 @@ class OpsAgent(
             elif state == "EXECUTE":
                 self.chat.progress("执行中...")
                 before_state = self._targeted_observe(plan)
-                exec_result = self._execute(plan)
+                exec_result, exec_all_success = self._execute(plan)
 
                 action_type = self._classify_action(plan.action)
                 target_service = self._extract_service_name(plan.action)
@@ -738,7 +738,31 @@ class OpsAgent(
                     f"命令: {plan.action}\n结果:\n{exec_result[:self.ctx_limits.exec_result_chars]}",
                 )
 
-                state = "VERIFY"
+                if not exec_all_success:
+                    # 执行失败：先回滚，再回 DIAGNOSE 重新分析
+                    self.chat.say("⚠️ 执行步骤失败，执行回滚...", "warning")
+                    if plan.rollback_steps:
+                        rollback_result = self._execute_rollback(plan)
+                        self.notebook.append_to_incident(
+                            self.current_incident,
+                            f"\n## 回滚结果 (尝试 {fix_attempts})\n"
+                            f"```\n{rollback_result[:self.ctx_limits.exec_result_chars]}\n```\n",
+                        )
+                    else:
+                        self.chat.say("无回滚步骤可用", "warning")
+
+                    # 把失败信息加入 observations，回到 DIAGNOSE
+                    observations = (
+                        observations
+                        + f"\n\n## 修复执行失败 (尝试 {fix_attempts})\n"
+                        f"命令: {plan.action}\n"
+                        f"结果: {exec_result[:self.ctx_limits.exec_result_for_rediagnose_chars]}\n"
+                        f"已回滚: {'是' if plan.rollback_steps else '无回滚步骤'}"
+                    )
+                    self.chat.progress("执行失败，重新诊断...")
+                    state = "DIAGNOSE"
+                else:
+                    state = "VERIFY"
 
             # ── VERIFY（多次重试）──
             elif state == "VERIFY":
