@@ -352,6 +352,7 @@ class HumanChannel:
 │    {Color.YELLOW}pause{Color.CYAN}     暂停我的自主行动                           │
 │    {Color.YELLOW}resume{Color.CYAN}    恢复自主行动                              │
 │    {Color.YELLOW}stop{Color.CYAN}      停止当前调查回到巡检                       │
+│    {Color.YELLOW}help{Color.CYAN}      查看更多命令                              │
 │    {Color.YELLOW}quit{Color.CYAN}      让我下班                                 │
 ╰───────────────────────────────────────────────────────╯{Color.RESET}{mode_hint}
 """, flush=True)
