@@ -670,6 +670,7 @@ class HumanInteractionMixin:
             "   unfreeze      解除紧急冻结\n"
             "   silence       查看静默中的异常指纹\n"
             "   clear silence 清空静默表,下一轮重新判断\n"
+            "   new / clear chat / 清除对话   清除自由对话上下文\n"
             "   collab (协作)  进入协作排查模式(人+Agent 一起定位问题)\n"
             "   self-fix <描述> 触发一次自修复会话(修改 ops-agent 自己)\n"
             "   quit          让我下班\n"
