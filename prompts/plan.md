@@ -9,6 +9,9 @@
 ## 授权规则
 {permissions}
 
+## 项目地图（AGENTS.md）
+{project_map}
+
 ## 项目的构建与部署配置
 {build_deploy_context}
 

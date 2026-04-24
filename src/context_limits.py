@@ -70,6 +70,9 @@ class ContextLimitsConfig:
     show_file_preview_chars: int = 2000
     conversation_incident_chars: int = 3000
 
+    # ── 项目地图 (AGENTS.md) ──
+    agents_md_chars: int = 8000
+
     # ── 自修复输出 ──
     self_repair_output_tail_chars: int = 1500
 
