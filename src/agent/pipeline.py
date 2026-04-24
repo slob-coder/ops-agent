@@ -52,12 +52,14 @@ class PipelineMixin:
         self.chat.progress("评估观察结果...")
         system_map = self.notebook.read("system-map.md")
         recent = self._recent_incidents_summary()
+        silences = self.notebook.read("incidents/silence.yml")
 
         prompt = self._fill_prompt(
             "assess",
             system_map=system_map,
             observations=observations,
             recent_incidents=recent,
+            silences=silences or "# 暂无静默规则",
         )
 
         response = self._ask_llm(prompt, phase="ASSESS")
