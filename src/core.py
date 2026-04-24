@@ -30,6 +30,10 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+
+# 静默第三方库的 INFO 日志（httpx 等），避免混入终端输出
+for _lib in ("httpx", "httpcore", "openai", "anthropic", "urllib3"):
+    logging.getLogger(_lib).setLevel(logging.WARNING)
 logger = logging.getLogger("ops-agent")
 
 
