@@ -21,6 +21,7 @@ from src.agent.pr_workflow import PRWorkflowMixin
 from src.agent.human import HumanInteractionMixin
 from src.agent.metrics import MetricsMixin
 from src.agent.parsers import ParsersMixin
+from src.agent.agents_md import AgentsMdMixin
 from src.context_limits import get_context_limits, reload_context_limits
 
 # ─── 日志配置 ───
@@ -39,6 +40,7 @@ class OpsAgent(
     HumanInteractionMixin,
     MetricsMixin,
     ParsersMixin,
+    AgentsMdMixin,
 ):
     """数字运维员工"""
 
@@ -262,6 +264,9 @@ class OpsAgent(
 
         watchlist = self._ask_llm(prompt2)
         self.notebook.write("config/watchlist.md", watchlist)
+
+        # 为 source_repos 生成 AGENTS.md（项目地图）
+        self._check_and_generate_agents_md()
 
         # 写 README
         now = datetime.now().strftime("%Y-%m-%d")

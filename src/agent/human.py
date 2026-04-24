@@ -252,6 +252,13 @@ class HumanInteractionMixin:
             label = "人类" if entry["role"] == "human" else "Agent"
             history_text += f"\n**{label}**: {entry['content']}\n"
 
+        # 涉及代码话题时注入项目地图
+        project_map_section = ""
+        if self._is_code_related(msg):
+            _map = self._load_agents_md_section(keywords=msg.split()[:10])
+            if _map:
+                project_map_section = f"\n## 项目地图（AGENTS.md）\n{_map}\n"
+
         prompt = f"""人类同事给你发了一条消息。判断这是一个问题（要回答）还是一个任务（要执行）。
 
 ## 当前状态
@@ -262,6 +269,7 @@ class HumanInteractionMixin:
 
 ## 上下文
 {context}
+{project_map_section}
 
 ## 对话历史
 {history_text}

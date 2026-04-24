@@ -140,6 +140,15 @@ class PipelineMixin:
         # trace 记录源码上下文
         self.chat.trace("DIAGNOSE", f"源码上下文:\n{source_text[:self.ctx_limits.source_context_trace_chars]}")
 
+        # 加载项目地图 (AGENTS.md)：有源码定位时按 repo 加载（智能裁剪），否则加载全文
+        project_map = ""
+        if locate_result and locate_result.locations:
+            repo_name = locate_result.locations[0].repo_name
+            keywords = [summary, assessment.get("summary", "")]
+            project_map = self._load_agents_md_section(repo_name, keywords)
+        elif self.current_target and self.current_target.source_repos:
+            project_map = self._load_agents_md()
+
         max_obs = getattr(self.limits.config, "max_observations_chars", 8000)
         prompt = self._fill_prompt(
             "diagnose",
@@ -149,6 +158,7 @@ class PipelineMixin:
             similar_incidents=incidents_content or "（无历史记录）",
             system_map=system_map,
             source_locations=source_text,
+            project_map=project_map or "（无项目地图）",
         )
 
         response = self._ask_llm(prompt, phase="DIAGNOSE")
@@ -250,12 +260,21 @@ class PipelineMixin:
         # 提取构建/部署配置
         build_deploy_context = self._get_build_deploy_context()
 
+        # 加载项目地图：code_bug 类型时智能裁剪
+        project_map = ""
+        if diagnosis.get("type") == "code_bug":
+            keywords = [diagnosis.get("hypothesis", ""), diagnosis.get("facts", "")]
+            project_map = self._load_agents_md_section(keywords=keywords)
+        elif self.current_target and self.current_target.source_repos:
+            project_map = self._load_agents_md()
+
         prompt = self._fill_prompt(
             "plan",
             diagnosis=str(diagnosis),
             matched_playbook=playbook or "（无匹配的 Playbook）",
             permissions=permissions,
             build_deploy_context=build_deploy_context,
+            project_map=project_map or "（无项目地图）",
         )
 
         response = self._ask_llm(prompt, phase="PLAN")
