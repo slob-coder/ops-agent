@@ -82,8 +82,11 @@ URGENCY_STYLE = {
     "critical": ("🚨", Color.RED),
     "question": ("❓", Color.MAGENTA),
     "action":   ("🔧", Color.BLUE),
-    "observe":  ("🔍", Color.GRAY),
+    "observe":  ("·", Color.GRAY),
 }
+
+# ── 分隔线 ──
+_SEPARATOR = f"{Color.DIM}{'─' * 50}{Color.RESET}"
 
 
 class HumanChannel:
@@ -149,6 +152,7 @@ class HumanChannel:
                         f"{Color.BOLD}{Color.YELLOW}▶ {line}{Color.RESET}",
                         flush=True,
                     )
+                    print(_SEPARATOR, flush=True)
 
                 # 路由消息：批准等待中 → 走 approval 通道
                 if self._waiting_approval:
@@ -197,6 +201,7 @@ class HumanChannel:
                         f"{Color.BOLD}{Color.YELLOW}▶ {line}{Color.RESET}",
                         flush=True,
                     )
+                    print(_SEPARATOR, flush=True)
                     self.inbox.put(line)
                     self.interrupted.set()
             except (EOFError, OSError):
@@ -211,17 +216,16 @@ class HumanChannel:
         icon, color = URGENCY_STYLE.get(urgency, ("💬", Color.CYAN))
         ts = datetime.now().strftime("%H:%M:%S")
 
-        # 多行消息缩进对齐
         lines = message.split("\n")
         first = lines[0]
-        rest_lines = ["           " + l for l in lines[1:]]
 
         formatted = f"{Color.GRAY}[{ts}]{Color.RESET} {icon} {color}{first}{Color.RESET}"
-        if rest_lines:
-            formatted += "\n" + "\n".join(rest_lines)
+        if len(lines) > 1:
+            formatted += "\n" + "\n".join(lines[1:])
 
         with self._output_lock:
             print(formatted, flush=True)
+            print(_SEPARATOR, flush=True)
 
         self.notebook.log_conversation("Agent", message)
 
@@ -233,10 +237,15 @@ class HumanChannel:
         with self._output_lock:
             print(formatted, flush=True)
 
+    def cmd_log(self, cmd: str):
+        """命令执行日志 — 暗灰色竖线前缀，跟在上一条输出后面"""
+        with self._output_lock:
+            print(f"{Color.DIM}           │ {cmd}{Color.RESET}", flush=True)
+
     def progress(self, message: str):
         """轻量进度提示 — 灰色单行，告诉人类'我在干嘛'，不存对话记录"""
         ts = datetime.now().strftime("%H:%M:%S")
-        formatted = f"{Color.GRAY}[{ts}]  ·  {message}{Color.RESET}"
+        formatted = f"{Color.GRAY}[{ts}] → {message}{Color.RESET}"
         with self._output_lock:
             print(formatted, flush=True)
 

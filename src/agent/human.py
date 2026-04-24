@@ -320,6 +320,7 @@ class HumanInteractionMixin:
 
             max_rounds = 20
             all_round_results = []  # 每轮的命令结果摘要
+            round_stats = []       # 每轮的命令计数
             final_reply = ""
 
             for round_num in range(1, max_rounds + 1):
@@ -333,7 +334,7 @@ class HumanInteractionMixin:
                     if self.chat.is_interrupted():
                         self.chat.say("收到新指令，停止当前任务。", "info")
                         return
-                    self.chat.log(f"执行: {cmd}")
+                    self.chat.cmd_log(cmd)
                     result = self._run_cmd(cmd, timeout=20)
                     cmd_results.append(str(result))
 
@@ -343,6 +344,7 @@ class HumanInteractionMixin:
                     for cmd, result in zip(commands[:len(cmd_results)], cmd_results)
                 )
                 all_round_results.append(round_summary)
+                round_stats.append({"cmd_count": len(cmd_results)})
 
                 # 滚动窗口：只保留最近 10 条，之前的压缩
                 if len(all_round_results) > 10:
@@ -392,7 +394,7 @@ class HumanInteractionMixin:
                 final_reply += text or followup_response
 
             # 记录 Agent 回复到内存历史和 notebook
-            total_cmds = sum(len(r) for r in all_round_results)
+            total_cmds = sum(r.get("cmd_count", 0) for r in round_stats)
             agent_record = f"执行 {len(all_round_results)} 轮共 {total_cmds} 条命令\n结论: {final_reply}"
             self._free_chat_history.append({"role": "agent", "content": agent_record})
             self.notebook.log_conversation("Agent", agent_record)
@@ -454,7 +456,7 @@ class HumanInteractionMixin:
         """批量执行命令并返回格式化结果"""
         cmd_results = []
         for cmd in commands[:self.limits.config.max_chat_commands]:
-            self.chat.log(f"执行: {cmd}")
+            self.chat.cmd_log(cmd)
             result = self._run_cmd(cmd, timeout=30)
             cmd_results.append(f"$ {cmd}\n{result}")
         return "\n".join(cmd_results)
