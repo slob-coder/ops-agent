@@ -21,30 +21,82 @@ class ParsersMixin:
 
         allow_fallback=False 时只匹配 commands 块，不匹配 bash/shell/sh。
         用于 free_chat 等场景，避免 LLM 展示代码片段被误执行。
+
+        支持多行命令结构：heredoc（<< DELIM）和反斜杠续行（\\）。
         """
         commands = []
 
         # 只匹配 ```commands ... ``` 块
         blocks = re.findall(r"```commands\s*\n(.*?)```", text, re.DOTALL)
         for block in blocks:
-            for line in block.strip().split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    commands.append(line)
+            commands.extend(self._parse_block_lines(block))
 
         # 如果没有 commands 块，再尝试匹配 bash/shell/sh 块（兼容旧 observe/assess prompt）
         if not commands and allow_fallback:
             blocks = re.findall(r"```(?:bash|shell|sh)\s*\n(.*?)```", text, re.DOTALL)
             for block in blocks:
-                for line in block.strip().split("\n"):
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        commands.append(line)
+                commands.extend(self._parse_block_lines(block))
 
         # 如果没有代码块，尝试匹配 STEP N: 格式
         if not commands:
             for match in re.finditer(r"STEP\s+\d+:\s*`?(.+?)`?\s*$", text, re.MULTILINE):
                 commands.append(match.group(1).strip())
+
+        return commands
+
+    @staticmethod
+    def _parse_block_lines(block: str) -> list:
+        """解析命令块中的行，正确合并 heredoc 和反斜杠续行为单条命令。
+
+        处理的多行结构：
+        1. Heredoc:  cmd << 'DELIM' ... DELIM  （含 <<- 和引号变体）
+        2. 反斜杠续行: cmd foo \\
+                       bar baz
+        """
+        lines = block.split("\n")
+        commands = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            # 跳过空行和注释
+            if not stripped or stripped.startswith("#"):
+                i += 1
+                continue
+
+            # ── 检测 heredoc: <<[-] ['"]?DELIM['"]? ──
+            heredoc_match = re.search(r"<<-?\s*['\"]?([A-Za-z_]\w*)['\"]?", stripped)
+            if heredoc_match:
+                delimiter = heredoc_match.group(1)
+                merged = [line]
+                i += 1
+                while i < len(lines):
+                    merged.append(lines[i])
+                    # heredoc 结束符：行首（可能有 tab，<<- 情况）就是 delimiter
+                    if lines[i].strip() == delimiter:
+                        break
+                    i += 1
+                commands.append("\n".join(merged))
+                i += 1
+                continue
+
+            # ── 检测反斜杠续行 ──
+            if stripped.endswith("\\"):
+                merged = [line]
+                i += 1
+                while i < len(lines):
+                    merged.append(lines[i])
+                    if not lines[i].strip().endswith("\\"):
+                        break
+                    i += 1
+                commands.append("\n".join(merged))
+                i += 1
+                continue
+
+            # ── 普通单行命令 ──
+            commands.append(stripped)
+            i += 1
 
         return commands
 
