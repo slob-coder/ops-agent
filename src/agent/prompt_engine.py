@@ -144,6 +144,10 @@ class PromptsMixin:
                 f"```\n{prompt}\n```",
             )
 
+        # 终端提示：让人类知道有一次 LLM 交互
+        label = phase or "LLM"
+        self.chat.llm_log(label)
+
         system = self._build_system_prompt()
         check = self._interrupt_check if allow_interrupt else None
         response = self.llm.ask(

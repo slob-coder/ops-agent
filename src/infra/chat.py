@@ -242,6 +242,16 @@ class HumanChannel:
         with self._output_lock:
             print(f"{Color.DIM}           │ {cmd}{Color.RESET}", flush=True)
 
+    def llm_log(self, phase: str = ""):
+        """LLM 交互提示 — 暗灰色，替代 httpx 原始日志"""
+        ts = datetime.now().strftime("%H:%M:%S")
+        label = f" {phase}" if phase else ""
+        with self._output_lock:
+            print(
+                f"{Color.DIM}[{ts}] ◈ LLM{label}{Color.RESET}",
+                flush=True,
+            )
+
     def progress(self, message: str):
         """轻量进度提示 — 灰色单行，告诉人类'我在干嘛'，不存对话记录"""
         ts = datetime.now().strftime("%H:%M:%S")
