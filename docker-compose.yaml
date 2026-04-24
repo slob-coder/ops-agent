@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  ops-agent:
+    build: .
+    container_name: ops-agent
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+
+    env_file: .env
+
+    volumes:
+      # notebook 持久化（配置、incident、trace、对话记录等）
+      - /opt/vol/ops-agent/notebook:/data/notebook
+      # 源码仓库（agent 需要读写代码、执行 git 操作）
+      - /opt/vol/source-projs:/opt/vol/source-projs
+      # Docker socket（agent 需要执行 docker 命令管理目标服务）
+      - /var/run/docker.sock:/var/run/docker.sock
+      # SSH 密钥（如果用 key 认证目标服务器）
+      - /root/.ssh:/root/.ssh:ro
+
+    # 主机网络：agent 需要访问本地 docker compose 服务端口
+    network_mode: host

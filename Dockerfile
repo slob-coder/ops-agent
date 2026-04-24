@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git openssh-client grep procps curl && \
+    git openssh-client sshpass curl procps docker.io && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -11,12 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /data/notebook && \
+RUN mkdir -p /data/notebook/config /root/.ssh && \
     git config --global user.name "OpsAgent" && \
-    git config --global user.email "agent@ops"
+    git config --global user.email "agent@ops" && \
+    echo "StrictHostKeyChecking=no" >> /root/.ssh/config
 
-ENV OPS_LLM_PROVIDER=anthropic
-ENV OPS_LLM_MODEL=claude-sonnet-4-20250514
-# OPS_LLM_API_KEY 通过 docker run -e 传入
+VOLUME /data/notebook
 
 ENTRYPOINT ["python", "main.py", "--notebook", "/data/notebook"]
