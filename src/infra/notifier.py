@@ -33,8 +33,12 @@ URGENCY_LEVELS = ("info", "warning", "critical")
 
 @dataclass
 class NotifierConfig:
-    type: str = "none"                       # slack | dingtalk | feishu | none
+    type: str = "none"                       # slack | dingtalk | feishu | feishu_app | none
     webhook_url: str = ""
+    # 飞书应用机器人模式
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_chat_id: str = ""                 # 接收消息的群聊 ID
     notify_on: list = field(default_factory=lambda: [
         "incident_opened", "incident_closed", "pr_merged",
         "revert_triggered", "critical_failure", "llm_degraded",
@@ -59,9 +63,13 @@ class NotifierConfig:
 
         # quiet_hours 是嵌套结构
         quiet = data.get("quiet_hours") or {}
+        feishu_app = data.get("feishu_app") or {}
         cfg = cls(
             type=(data.get("type") or "none"),
             webhook_url=(data.get("webhook_url") or ""),
+            feishu_app_id=(feishu_app.get("app_id") or ""),
+            feishu_app_secret=(feishu_app.get("app_secret") or ""),
+            feishu_chat_id=(feishu_app.get("chat_id") or ""),
             notify_on=list(data.get("notify_on") or cls().notify_on),
             quiet_hours_start=(quiet.get("start") or ""),
             quiet_hours_end=(quiet.get("end") or ""),
@@ -71,6 +79,14 @@ class NotifierConfig:
         env_url = os.environ.get("OPS_NOTIFIER_WEBHOOK_URL")
         if env_url:
             cfg.webhook_url = env_url
+        for key, env_key in [
+            ("feishu_app_id", "OPS_FEISHU_APP_ID"),
+            ("feishu_app_secret", "OPS_FEISHU_APP_SECRET"),
+            ("feishu_chat_id", "OPS_FEISHU_CHAT_ID"),
+        ]:
+            env_val = os.environ.get(env_key)
+            if env_val:
+                setattr(cfg, key, env_val)
         return cfg
 
     def in_quiet_hours(self, now: datetime | None = None) -> bool:
@@ -178,6 +194,7 @@ class DingTalkNotifier(_HTTPNotifier):
 
 
 class FeishuNotifier(_HTTPNotifier):
+    """飞书 Webhook 机器人（群聊添加自定义机器人获取的 webhook 地址）"""
     def send(self, title, content, urgency="info"):
         prefix = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(urgency, "")
         payload = {
@@ -185,6 +202,83 @@ class FeishuNotifier(_HTTPNotifier):
             "content": {"text": f"{prefix} {title}\n\n{content}\n\n— OpsAgent"},
         }
         return self._post(payload)
+
+
+class FeishuAppNotifier(Notifier):
+    """飞书自建应用机器人（使用 App ID + App Secret 获取 tenant_access_token 发消息）
+
+    配置需要:
+    - app_id: 飞书开放平台创建的应用 App ID
+    - app_secret: 飞书开放平台创建的应用 App Secret
+    - chat_id: 接收消息的群聊 chat_id
+    """
+    _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    _MSG_URL = "https://open.feishu.cn/open-apis/im/v1/messages"
+
+    def __init__(self, app_id: str, app_secret: str, chat_id: str):
+        self.app_id = app_id
+        self.app_secret = app_secret
+        self.chat_id = chat_id
+        self._token = ""
+        self._token_expires = 0.0
+
+    def _get_token(self) -> str:
+        """获取或刷新 tenant_access_token"""
+        if self._token and time.time() < self._token_expires:
+            return self._token
+        payload = {
+            "app_id": self.app_id,
+            "app_secret": self.app_secret,
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = Request(
+            self._TOKEN_URL, data=body,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            if data.get("code") != 0:
+                logger.warning(f"feishu token error: {data.get('msg')}")
+                return ""
+            self._token = data["tenant_access_token"]
+            # 提前 60 秒过期，避免边界问题
+            self._token_expires = time.time() + data.get("expire", 7200) - 60
+            return self._token
+        except Exception as e:
+            logger.warning(f"feishu token request failed: {e}")
+            return ""
+
+    def send(self, title, content, urgency="info") -> bool:
+        token = self._get_token()
+        if not token:
+            return False
+        prefix = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(urgency, "")
+        text = f"{prefix} {title}\n\n{content}\n\n— OpsAgent"
+        msg_payload = {
+            "receive_id": self.chat_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": text}),
+        }
+        body = json.dumps(msg_payload, ensure_ascii=False).encode("utf-8")
+        req = Request(
+            self._MSG_URL + f"?receive_id_type=chat_id",
+            data=body,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            if data.get("code") != 0:
+                logger.warning(f"feishu send error: {data.get('msg')}")
+                return False
+            return True
+        except Exception as e:
+            logger.warning(f"feishu send failed: {e}")
+            return False
 
 
 # ──────────────────────────────────────
@@ -201,6 +295,12 @@ def make_notifier(config: NotifierConfig, http_fn=None) -> Notifier:
         return DingTalkNotifier(config.webhook_url, http_fn=http_fn)
     if t == "feishu":
         return FeishuNotifier(config.webhook_url, http_fn=http_fn)
+    if t == "feishu_app":
+        return FeishuAppNotifier(
+            app_id=config.feishu_app_id,
+            app_secret=config.feishu_app_secret,
+            chat_id=config.feishu_chat_id,
+        )
     raise ValueError(f"unknown notifier type: {t}")
 
 
