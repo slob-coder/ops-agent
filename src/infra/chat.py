@@ -141,6 +141,15 @@ class HumanChannel:
                 if not line:
                     continue
 
+                # 回显人类输入（醒目颜色）
+                with self._output_lock:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    print(
+                        f"{Color.GRAY}[{ts}]{Color.RESET} "
+                        f"{Color.BOLD}{Color.YELLOW}▶ {line}{Color.RESET}",
+                        flush=True,
+                    )
+
                 # 路由消息：批准等待中 → 走 approval 通道
                 if self._waiting_approval:
                     self._approval_queue.put(line)
@@ -181,6 +190,13 @@ class HumanChannel:
                 if self._waiting_approval:
                     self._approval_queue.put(line)
                 else:
+                    # 回显人类输入（醒目颜色）
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    print(
+                        f"{Color.GRAY}[{ts}]{Color.RESET} "
+                        f"{Color.BOLD}{Color.YELLOW}▶ {line}{Color.RESET}",
+                        flush=True,
+                    )
                     self.inbox.put(line)
                     self.interrupted.set()
             except (EOFError, OSError):
