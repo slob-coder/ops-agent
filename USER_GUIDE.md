@@ -68,6 +68,152 @@ pip install -r requirements.txt
 
 OpsAgent 的所有配置都集中在 `notebook/config/` 目录下.除了 LLM 凭据走环境变量,其他都是 yaml/markdown,git 可追踪.
 
+### 2.0 一键配置（ops-agent init）
+
+如果你是第一次使用,推荐用交互式引导自动生成所有配置:
+
+```bash
+python main.py init
+```
+
+引导流程:
+
+```
+🚀 Welcome to ops-agent setup!
+
+━━━ LLM Configuration ━━━
+? LLM Provider (anthropic): anthropic
+? API Key: ****
+? API Base URL (enter for default): 
+? Model (claude-sonnet-4-20250514): 
+? Test LLM connection now? [Y/n]: y
+  Testing LLM connection...
+  ✅ LLM connection OK
+
+━━━ Target Configuration ━━━
+? Target type (ssh): ssh
+? Target name (my-ssh): web-prod
+? Criticality (normal): high
+? Description (optional): 生产 web 服务器
+? SSH address (user@host): ubuntu@10.0.0.10
+? SSH port (22): 
+? SSH key path (optional): ~/.ssh/id_rsa
+? Test SSH connection now? [Y/n]: y
+  Testing SSH connection...
+  ✅ SSH connection OK
+? Configure a source repo for this target? [y/N]: y
+? Repo name (app): backend
+? Local clone path: /opt/sources/backend
+? Git remote URL (optional): git@github.com:org/backend.git
+? Language (python/java/go/node/rust/...): python
+? Build command (optional): make build
+? Test command (optional): pytest -x
+
+━━━ Notification (optional) ━━━
+? Notification type (none/slack/dingtalk/feishu/feishu_app): none
+
+✅ notebook/config/targets.yaml
+✅ notebook/config/limits.yaml
+✅ notebook/config/permissions.md
+
+━━━ Next Steps ━━━
+  1. Review:  cat notebook/config/targets.yaml
+  2. Start:   python main.py --notebook ./notebook
+
+🎉 Setup complete!
+```
+
+**`init` 生成的文件:**
+
+| 文件 | 说明 |
+|---|---|
+| `targets.yaml` | 根据你的输入生成,可之后手动编辑 |
+| `limits.yaml` | 安全默认值,已有文件不会被覆盖 |
+| `permissions.md` | 标准授权规则,已有文件不会被覆盖 |
+| `notifier.yaml` | 仅在选择通知类型时生成 |
+
+**Docker / CI 环境**用 `--from-env` 模式,从环境变量读取配置:
+
+```bash
+python main.py init --from-env
+```
+
+缺少必填环境变量时会报错退出.完整环境变量列表:
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `OPS_LLM_PROVIDER` | | LLM 提供商(默认 anthropic) |
+| `OPS_LLM_API_KEY` | ✓ | API Key |
+| `OPS_LLM_BASE_URL` | | API 地址(默认随 provider) |
+| `OPS_LLM_MODEL` | | 模型名(默认随 provider) |
+| `OPS_TARGET_TYPE` | | 目标类型(默认 ssh) |
+| `OPS_TARGET_NAME` | | 目标名称(默认 my-{type}) |
+| `OPS_TARGET_HOST` | ssh 时必填 | SSH 地址(user@host) |
+| `OPS_TARGET_PORT` | | SSH 端口(默认 22) |
+| `OPS_TARGET_KEY_FILE` | | SSH 密钥路径 |
+| `OPS_TARGET_PASSWORD_ENV` | | SSH 密码环境变量名 |
+| `OPS_TARGET_CRITICALITY` | | 严重度(默认 normal) |
+| `OPS_TARGET_DESCRIPTION` | | 目标描述 |
+| `OPS_TARGET_COMPOSE_FILE` | docker | docker-compose.yaml 路径 |
+| `OPS_TARGET_KUBECONFIG` | k8s | kubeconfig 路径 |
+| `OPS_TARGET_CONTEXT` | k8s | kubectl context |
+| `OPS_TARGET_NAMESPACE` | k8s | namespace(默认 default) |
+| `OPS_REPO_NAME` | | 仓库名(有此变量则启用源码配置) |
+| `OPS_REPO_PATH` | 启用仓库必填 | 本地 clone 路径 |
+| `OPS_REPO_URL` | | Git 远端 URL |
+| `OPS_REPO_LANGUAGE` | | 编程语言 |
+| `OPS_REPO_BUILD_CMD` | | 编译命令 |
+| `OPS_REPO_TEST_CMD` | | 测试命令 |
+| `OPS_REPO_DEPLOY_CMD` | | 部署命令 |
+| `OPS_REPO_GIT_HOST` | | Git 托管(github/gitlab) |
+| `OPS_NOTIFIER_TYPE` | | 通知类型(默认 none) |
+| `OPS_NOTIFIER_WEBHOOK_URL` | | Webhook URL |
+
+**docker-compose 示例:**
+
+```yaml
+# docker-compose.yml
+services:
+  ops-agent-init:
+    image: slobcoder/ops-agent
+    command: init --from-env
+    env_file: .env
+    volumes:
+      - ./notebook:/app/notebook
+      - ~/.ssh:/root/.ssh:ro
+
+  ops-agent:
+    image: slobcoder/ops-agent
+    env_file: .env
+    volumes:
+      - ./notebook:/app/notebook
+      - ~/.ssh:/root/.ssh:ro
+    ports:
+      - "9876:9876"
+    depends_on:
+      ops-agent-init:
+        condition: service_completed_successfully
+```
+
+```bash
+# .env
+OPS_LLM_PROVIDER=anthropic
+OPS_LLM_API_KEY=sk-ant-xxx
+OPS_TARGET_TYPE=ssh
+OPS_TARGET_NAME=web-prod
+OPS_TARGET_HOST=ubuntu@10.0.0.10
+OPS_TARGET_KEY_FILE=/root/.ssh/id_rsa
+OPS_NOTIFIER_TYPE=slack
+OPS_NOTIFIER_WEBHOOK_URL=https://hooks.slack.com/services/XXX
+```
+
+```bash
+# 一键启动（init → run）
+docker compose up -d
+```
+
+以下各节是手动配置的详细说明.如果你已经用 `init` 生成了配置,可以跳过,之后需要微调时再参考.
+
 ### 2.1 LLM 配置
 
 通过环境变量配置.支持三种 provider:

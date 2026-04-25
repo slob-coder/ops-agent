@@ -68,37 +68,71 @@ pip install -r requirements.txt
 
 依赖:`anthropic` `openai` `prompt_toolkit` `pyyaml` 四个,其余全部 stdlib.
 
-### 2. 配置 LLM
+### 2. 一键配置（推荐）
 
 ```bash
-# Anthropic (默认)
-export OPS_LLM_API_KEY="sk-ant-..."
-
-# 或 OpenAI
-export OPS_LLM_PROVIDER=openai
-export OPS_LLM_API_KEY="sk-..."
-export OPS_LLM_MODEL=gpt-4o
-
-# 或本地模型 (兼容 OpenAI API 的)
-export OPS_LLM_PROVIDER=openai
-export OPS_LLM_BASE_URL=http://localhost:11434/v1
-export OPS_LLM_MODEL=llama3
-export OPS_LLM_API_KEY=dummy
+python main.py init
 ```
 
-### 3. 启动
+交互式引导,自动生成所有配置文件:
+
+```
+🚀 Welcome to ops-agent setup!
+
+? LLM Provider (anthropic): anthropic
+? API Key: sk-ant-****
+? Target name (my-ssh): web-prod
+? Target type (ssh): ssh
+? SSH address (user@host): ubuntu@10.0.0.10
+? SSH key path (optional): ~/.ssh/id_rsa
+? Configure a source repo? [y/N]: n
+? Notification type (none): none
+✅ notebook/config/targets.yaml
+✅ notebook/config/limits.yaml
+✅ notebook/config/permissions.md
+🎉 Setup complete!
+```
+
+**Docker 用户**用环境变量模式:
 
 ```bash
-# 监控本机
-python main.py
+docker run -it --rm \
+  -e OPS_LLM_PROVIDER=anthropic \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  -e OPS_TARGET_TYPE=ssh \
+  -e OPS_TARGET_NAME=web-prod \
+  -e OPS_TARGET_HOST=ubuntu@10.0.0.10 \
+  -e OPS_TARGET_KEY_FILE=/root/.ssh/id_rsa \
+  -v $(pwd)/notebook:/app/notebook \
+  slobcoder/ops-agent init --from-env
+```
 
-# 监控远程服务器
+`init` 支持的完整环境变量列表见 [USER_GUIDE.md](./USER_GUIDE.md).
+
+### 3. 手动配置（可选）
+
+如果不想用 `init`,也可以手动设置:
+
+```bash
+# LLM — 通过环境变量
+export OPS_LLM_API_KEY="sk-ant-..."
+
+# 目标 — 命令行参数
 python main.py --target user@192.168.1.100
 
-# 多目标(配置在 notebook/config/targets.yaml)
+# 或手写 notebook/config/targets.yaml（参考 targets.yaml.example）
+```
+
+### 4. 启动
+
+```bash
+# 监控本机（无需配置）
+python main.py
+
+# 多目标（用 init 生成的配置）
 python main.py --notebook ./notebook
 
-# 只读模式(只观察不动手)
+# 只读模式（只观察不动手）
 python main.py --readonly
 
 # Docker
@@ -107,7 +141,7 @@ docker run -it -e OPS_LLM_API_KEY=sk-ant-... \
   -v $(pwd)/notebook:/data/notebook ops-agent
 ```
 
-### 4. 和 Agent 对话
+### 5. 和 Agent 对话
 
 ```
 > status                       # 查看 Agent 状态
@@ -120,7 +154,7 @@ docker run -it -e OPS_LLM_API_KEY=sk-ant-... \
 
 完整命令列表见 [USER_GUIDE.md](./USER_GUIDE.md).
 
-### 5. 健康检查
+### 6. 健康检查
 
 ```bash
 # Agent 启动后默认在 127.0.0.1:9876 暴露 HTTP 端点
@@ -136,6 +170,7 @@ curl localhost:9876/metrics   # Prometheus 格式 metrics
 ops-agent/
 ├── main.py                       # 入口,解析参数,启动 OpsAgent
 ├── src/
+│   ├── init.py                    # ops-agent init 交互式配置引导
 │   ├── core.py                   # OpsAgent 类,主循环 + 状态机
 │   ├── context_limits.py         # 上下文窗口限制配置
 │   ├── reporter.py               # 每日健康报告
@@ -245,12 +280,42 @@ done
 
 ## 环境变量
 
+### LLM
+
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `OPS_LLM_PROVIDER` | `anthropic` | LLM 提供商(anthropic / openai / zhipu) |
 | `OPS_LLM_MODEL` | `claude-sonnet-4-20250514` | 模型名称 |
 | `OPS_LLM_API_KEY` | (无) | API Key |
 | `OPS_LLM_BASE_URL` | (无) | 自定义 API 地址 |
+
+### ops-agent init（--from-env 模式）
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `OPS_TARGET_TYPE` | ✓ | 目标类型(ssh / docker / k8s / local) |
+| `OPS_TARGET_NAME` | | 目标名称(默认 `my-{type}`) |
+| `OPS_TARGET_HOST` | ssh 必填 | SSH 地址(user@host) |
+| `OPS_TARGET_PORT` | | SSH 端口(默认 22) |
+| `OPS_TARGET_KEY_FILE` | | SSH 密钥路径 |
+| `OPS_TARGET_PASSWORD_ENV` | | SSH 密码环境变量名 |
+| `OPS_TARGET_CRITICALITY` | | 严重度(low/normal/high/critical) |
+| `OPS_TARGET_DESCRIPTION` | | 目标描述 |
+| `OPS_REPO_NAME` | | 仓库名(有此变量则启用源码配置) |
+| `OPS_REPO_PATH` | 启用仓库必填 | 本地 clone 路径 |
+| `OPS_REPO_URL` | | Git 远端 URL |
+| `OPS_REPO_LANGUAGE` | | 编程语言 |
+| `OPS_REPO_BUILD_CMD` | | 编译命令 |
+| `OPS_REPO_TEST_CMD` | | 测试命令 |
+| `OPS_REPO_DEPLOY_CMD` | | 部署命令 |
+| `OPS_REPO_GIT_HOST` | | Git 托管(github/gitlab) |
+| `OPS_NOTIFIER_TYPE` | | 通知类型(none/slack/dingtalk/feishu/feishu_app) |
+| `OPS_NOTIFIER_WEBHOOK_URL` | | 通知 Webhook URL |
+
+### 其他
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
 | `OPS_NOTIFIER_WEBHOOK_URL` | (无) | 覆盖 notifier.yaml 中的 webhook,推荐用于生产 |
 
 ---
