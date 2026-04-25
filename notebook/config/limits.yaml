@@ -56,15 +56,15 @@ max_observations_chars: 8000
 
 # incident_loop 总轮次上限(含 diagnose + fix 所有阶段)
 # 超过后强制退出当前 Incident
-max_total_rounds: 8
+max_total_rounds: 15
 
 # 诊断阶段最大轮次(COLLECT_MORE 循环的上限)
 # 超过后放弃继续收集信息,直接尝试修复
-max_diagnose_rounds: 4
+max_diagnose_rounds: 25
 
 # 修复最大尝试次数(PLAN→EXECUTE→VERIFY 循环的上限)
 # 超过后放弃自动修复,通知人类
-max_fix_attempts: 2
+max_fix_attempts: 3
 
 # ── 异常静默窗口 ──
 
@@ -76,34 +76,34 @@ silence_window_seconds: 1800
 # ── 观测命令数量限制 ──
 
 # observe 阶段每轮最多执行的命令数
-max_observe_commands: 10
+max_observe_commands: 15
 
 # verify_steps 最多执行的步骤数
-max_verify_steps: 6
+max_verify_steps: 15
 
 # _quick_observe 返回的最大命令数
-max_quick_observe_commands: 4
+max_quick_observe_commands: 20
 
 # gap collection 每轮最大命令数
-max_gap_commands: 8
+max_gap_commands: 20
 
 # LLM 生成的 gap 补充命令最大条数
-max_generated_gap_commands: 6
+max_generated_gap_commands: 20
 
 # 自由对话/协作模式单轮最多执行的命令数
-max_chat_commands: 8
+max_chat_commands: 20
 
 # 协作模式保留的最近对话轮数
-max_collab_history_rounds: 20
+max_collab_history_rounds: 25
 
 # 历史 Incident 摘要查看的最大条数
-max_recent_incidents: 5
+max_recent_incidents: 15
 
 # 补丁生成最大尝试次数(patch_loop)
 max_patch_attempts: 3
 
 # 源码定位最多处理的栈帧数
-max_source_locations: 5
+max_source_locations: 15
 
 # 未解析栈帧展示上限
 max_unresolved_frames: 5
