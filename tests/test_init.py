@@ -27,9 +27,9 @@ class TestTargetsYaml:
     def test_ssh_target_minimal(self):
         target = {"type": "ssh", "name": "my-ssh", "host": "ubuntu@10.0.0.1"}
         result = _generate_targets_yaml(target, None)
-        assert "name: my-ssh" in result
+        assert 'name: "my-ssh"' in result
         assert "type: ssh" in result
-        assert "host: ubuntu@10.0.0.1" in result
+        assert 'host: "ubuntu@10.0.0.1"' in result
         assert "source_repos" not in result
 
     def test_ssh_target_with_key(self):
@@ -40,7 +40,7 @@ class TestTargetsYaml:
         }
         result = _generate_targets_yaml(target, None)
         assert "port: 2222" in result
-        assert "key_file: ~/.ssh/id_rsa" in result
+        assert 'key_file: "~/.ssh/id_rsa"' in result
         assert "criticality: high" in result
 
     def test_ssh_target_default_port_omitted(self):
@@ -83,7 +83,7 @@ class TestTargetsYaml:
         }
         result = _generate_targets_yaml(target, repo)
         assert "source_repos:" in result
-        assert "name: backend" in result
+        assert 'name: "backend"' in result
         assert "language: python" in result
         assert 'build_cmd: "make build"' in result
 
@@ -254,7 +254,7 @@ class TestRunInit:
 
             content = (Path(tmpdir) / "config" / "targets.yaml").read_text()
             assert "source_repos:" in content
-            assert "name: backend" in content
+            assert 'name: "backend"' in content
             assert "language: python" in content
 
     def test_existing_limits_not_overwritten(self):
