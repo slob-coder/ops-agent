@@ -454,6 +454,56 @@ export OPS_NOTIFIER_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
 ## 3. 启动与部署
 
+### 3.0 配置校验
+
+启动前可以校验配置是否完整:
+
+```bash
+# 校验配置完整性（不调用 API）
+ops-agent check
+
+# 校验 + 测试 LLM 连通性
+ops-agent check --test-llm
+```
+
+校验项:
+
+| 检查项 | 内容 |
+|---|---|
+| LLM 配置 | `.env` 文件或环境变量中是否有 API key |
+| targets.yaml | YAML 格式、必填字段(name/type/host)、source_repos.path |
+| limits.yaml | YAML 格式、enabled 状态 |
+| permissions.md | 是否存在、内容是否过短 |
+| notifier.yaml | 格式检查（如存在） |
+| LLM 连通性 | `--test-llm` 时实际调用 API 验证 |
+
+输出示例:
+
+```
+🔍 OpsAgent 配置校验
+━━━━━━━━━━━━━━━━━━━━
+
+1. LLM 配置
+  ℹ️  LLM Provider: anthropic
+  ℹ️  LLM Model: claude-sonnet-4-20250514
+
+2. 目标配置
+  ℹ️  目标数量: 1
+  ℹ️    - web-prod (ssh)
+
+3. 爆炸半径限制
+  ℹ️  limits: enabled=True, max_actions/hour=20
+
+4. 授权规则
+  ℹ️  permissions.md ✓
+
+5. IM 通知
+  ℹ️  notifier: 不存在，不发送 IM 通知
+
+━━━ 校验结果 ━━━
+✅ 配置完整，可以启动
+```
+
 ### 3.1 本地 / Docker / systemd
 
 **本地直接跑**(开发或调试):
@@ -498,7 +548,42 @@ docker run -d -e OPS_LLM_API_KEY=sk-ant-... \
   -v $(pwd)/notebook:/app/notebook \
   -p 9876:9876 \
   ops-agent
+
+# Docker 中校验配置
+docker run --rm -e OPS_LLM_API_KEY=sk-ant-... \
+  -v $(pwd)/notebook:/app/notebook \
+  ops-agent check --test-llm
 ```
+
+**Docker Demo 模式**（零配置体验）:
+
+```bash
+docker run -it --rm \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  slobcoder/ops-agent demo
+```
+
+Demo 模式只需 API key，自动生成 mock 配置监控容器自身。适合:
+- 首次体验 ops-agent 的完整流程
+- 验证 LLM 配置是否正确
+- 演示和培训
+
+Demo 模式也可以指定 provider 和 model:
+
+```bash
+docker run -it --rm \
+  -e OPS_LLM_PROVIDER=openai \
+  -e OPS_LLM_API_KEY=sk-... \
+  -e OPS_LLM_MODEL=gpt-4o \
+  slobcoder/ops-agent demo
+```
+
+进入 Demo 后可以:
+- 输入自然语言提问（如: `最近有什么异常?`）
+- 输入 `status` 查看 Agent 状态
+- 输入 `quit` 退出
+
+> **注意**: Demo 模式监控的是容器内部，主要是巡检演示。要监控真实服务器，请使用 `ops-agent init` 配置 SSH 目标。
 
 **systemd**(生产推荐):
 
@@ -975,6 +1060,16 @@ def make_notifier(config, http_fn=None):
 ---
 
 ## 9. 故障排查
+
+### 首选诊断工具
+
+```bash
+# 一键校验配置
+ops-agent check
+
+# 含 LLM 连通性测试
+ops-agent check --test-llm
+```
 
 ### Agent 启动失败
 

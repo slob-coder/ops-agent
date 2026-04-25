@@ -246,6 +246,7 @@ ops-agent/
 │
 ├── prompts/                      # 7 个核心 prompt 模板
 ├── templates/pr-body.md          # PR 描述模板
+│   └── targets.example.yaml  # 目标配置模板（带注释）
 ├── notebook/                     # Agent 的笔记本(git 仓库)
 │   ├── config/
 │   │   ├── targets.yaml
@@ -340,6 +341,23 @@ done
 | `OPS_REPO_GIT_HOST` | | Git 托管(github/gitlab) |
 | `OPS_NOTIFIER_TYPE` | | 通知类型(none/slack/dingtalk/feishu/feishu_app) |
 | `OPS_NOTIFIER_WEBHOOK_URL` | | 通知 Webhook URL |
+
+### ops-agent check（配置校验）
+
+```bash
+ops-agent check              # 校验配置完整性
+ops-agent check --test-llm   # 校验 + 测试 LLM 连通性
+```
+
+检查项：LLM 凭据、targets.yaml 格式和必填字段、limits.yaml、permissions.md、notifier.yaml。
+
+### ops-agent demo（Docker 体验）
+
+```bash
+docker run -it --rm -e OPS_LLM_API_KEY=sk-ant-... slobcoder/ops-agent demo
+```
+
+只需 API key，自动生成 mock 配置监控容器自身，零配置体验完整流程。
 
 ### 其他
 
