@@ -1,12 +1,12 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git openssh-client sshpass curl procps docker.io && \
-    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
-        > /etc/apt/sources.list.d/docker.list && \
-    apt-get update && apt-get install -y --no-install-recommends docker-ce-cli && \
-    rm -rf /var/lib/apt/lists/*
+    git openssh-client sshpass curl procps && \
+    rm -rf /var/lib/apt/lists/* && \
+    DOCKER_VER="27.5.1" && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VER}.tgz" \
+        | tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
+    docker --version
 
 WORKDIR /app
 
