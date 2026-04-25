@@ -109,6 +109,16 @@ def main():
         run_init(notebook_path=args.notebook, from_env=args.from_env)
         return
 
+    if len(sys.argv) > 1 and sys.argv[1] == "check":
+        parser = argparse.ArgumentParser(description="ops-agent check")
+        parser.add_argument("command", nargs="?", default="check")
+        parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
+        parser.add_argument("--test-llm", action="store_true", help="Test LLM connectivity")
+        args = parser.parse_args()
+        from src.check import run_check
+        run_check(notebook_path=args.notebook, test_llm=args.test_llm)
+        return
+
     # 自动加载 .env 文件
     _load_dotenv()
 

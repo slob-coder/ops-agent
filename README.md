@@ -141,6 +141,29 @@ ops-agent --notebook ./notebook
 # 只读模式（只观察不动手）
 ops-agent --readonly
 
+# 校验配置是否完整
+ops-agent check
+
+# 校验 + 测试 LLM 连通性
+ops-agent check --test-llm
+```
+
+### 5. Docker 一键体验
+
+```bash
+# Demo 模式：只需 API key，自动生成 mock 配置
+docker run -it --rm \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  slobcoder/ops-agent demo
+
+# Docker 正式模式
+docker run -d \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  -v $(pwd)/notebook:/data/notebook \
+  -p 9876:9876 \
+  slobcoder/ops-agent
+```
+
 # Docker
 docker build -t ops-agent .
 docker run -it -e OPS_LLM_API_KEY=sk-ant-... \

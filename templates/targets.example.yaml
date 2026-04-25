@@ -1,0 +1,120 @@
+# ═══════════════════════════════════════════════════════════════
+# OpsAgent 目标系统配置
+# ═══════════════════════════════════════════════════════════════
+#
+# 在这里定义 Agent 需要管理的目标。Agent 会用一个统一的循环
+# 同时巡检所有目标。
+#
+# 支持的 type:
+#   - local       本地工作站
+#   - ssh         远程 Linux 服务器
+#   - docker      Docker 主机(本地或远程)
+#   - k8s         Kubernetes 集群
+#
+# 每个 target 必须有唯一的 name。其他字段按 type 决定填什么。
+# ═══════════════════════════════════════════════════════════════
+
+targets:
+
+  # ─── 示例 1:一台远程 Linux 服务器 ───
+  - name: web-prod
+    type: ssh
+    description: "生产 web 服务器,跑着 nginx + 一个 Java 后端"
+    criticality: high
+    tags: [linux, web]
+    host: ubuntu@10.0.0.10
+    port: 22
+    # SSH 认证(三选一):
+    # key_file: ~/.ssh/id_rsa
+    # password_env: WEB_PROD_PASSWORD     # 从环境变量读密码
+    # 或留空使用 ~/.ssh/config 里的配置
+    key_file: ~/.ssh/id_rsa
+
+    # 如果这台机器上有源代码,Agent 可以修 bug:
+    source_repos:
+      - name: backend
+        path: /opt/sources/backend          # 源码 clone 的本地路径(在 Agent 工作站上)
+        repo_url: git@github.com:mycompany/backend.git
+        branch: main
+        language: java
+        build_cmd: mvn clean compile        # 编译验证命令
+        test_cmd: mvn test                  # 测试验证命令
+        # ── git_host: Git 托管平台类型，决定 Agent 用哪个 API 创建 PR ──
+        # 可选值: github | gitlab | noop | ""(空=不走 PR，直接 push+deploy)
+        #
+        # 注意：当前 Agent 默认走 push+deploy 快速路径，不经过 PR。
+        # git_host 仅在 PR 严格模式启用时需要。
+        #
+        # 安装与认证 (GitHub):
+        #   1. 安装 gh CLI:
+        #      Ubuntu/Debian: sudo apt install gh
+        #      macOS:         brew install gh
+        #      其他:          https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+        #   2. 认证(需要 GitHub Personal Access Token，需 repo + pull_request 权限):
+        #      gh auth login --with-token <<< "ghp_xxxxxxxxxxxxxxxxxxxx"
+        #   3. 验证: gh auth status
+        #
+        # 安装与认证 (GitLab):
+        #   1. 安装 glab CLI:
+        #      Ubuntu/Debian: sudo apt install glab
+        #      macOS:         brew install glab
+        #   2. 认证:
+        #      glab auth login --hostname gitlab.com --token "glpat-xxxxxxxxxxxx"
+        #   3. 验证: glab auth status
+        git_host: github
+        # deploy_cmd: 补丁合并后的部署命令(不走 PR 时也会执行)
+        deploy_cmd: systemctl restart backend
+        # deploy_signal: 部署完成的信号文件(可选)
+        deploy_signal: /opt/backend/.deploy_done
+        # 该仓库的代码对应运行时的什么进程/服务:
+        runtime_service: backend            # systemctl 服务名,用于部署后重启
+        log_path: /opt/backend/logs/app.log
+
+  # ─── 示例 2:本地 Docker(最适合开发/测试)───
+  - name: local-docker
+    type: docker
+    description: "本地 docker-compose 项目"
+    criticality: normal
+    tags: [docker, dev]
+    docker_host: ""                          # 留空 = 本地 unix socket
+    compose_file: ./docker-compose.yaml      # 可选,有了能用 docker compose 命令
+
+    source_repos:
+      - name: my-app
+        path: /home/me/projects/my-app
+        repo_url: git@github.com:me/my-app.git
+        branch: main
+        language: python
+        build_cmd: python -m py_compile $(find . -name "*.py")
+        test_cmd: pytest -x
+        # ⚠️ git_host 仅 PR 模式需要，当前默认走 push+deploy 快速路径
+        # 详见上方示例 1 中的 git_host 注释(安装+认证步骤)
+        git_host: github
+        # Docker 项目推荐用 docker-compose 重建部署
+        deploy_cmd: docker-compose down && docker-compose up -d --build
+        runtime_service: my-app              # docker compose 服务名
+        log_path: ""                         # docker logs 自动获取
+
+  # ─── 示例 3:K8s 集群 ───
+  - name: prod-k8s
+    type: k8s
+    description: "生产 K8s 集群"
+    criticality: critical
+    tags: [k8s, prod]
+    kubeconfig: ~/.kube/config
+    context: prod-cluster
+    namespace: default
+
+    source_repos:
+      - name: api-gateway
+        path: /opt/sources/api-gateway
+        repo_url: git@gitlab.com:mycompany/api-gateway.git
+        branch: main
+        language: go
+        build_cmd: go build ./...
+        test_cmd: go test ./...
+        # GitLab 项目用 glab CLI
+        git_host: gitlab
+        deploy_cmd: kubectl rollout restart deployment/api-gateway -n default
+        runtime_service: api-gateway         # K8s deployment 名
+        # K8s 模式下重启 = kubectl rollout restart

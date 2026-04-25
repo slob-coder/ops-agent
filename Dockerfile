@@ -19,4 +19,8 @@ RUN pip install --no-cache-dir -e . && \
 
 VOLUME /data/notebook
 
-ENTRYPOINT ["ops-agent", "--notebook", "/data/notebook"]
+# 入口脚本区分 demo 和正常模式
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
