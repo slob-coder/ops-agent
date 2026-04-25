@@ -99,15 +99,20 @@ exec python3 "$INSTALL_DIR/main.py" "\$@"
 WRAPPER
     chmod +x "$BIN_DIR/ops-agent"
 
-    # 尝试加入 PATH — 两种方式都做
+    # 尝试加入 PATH — 直接在 PATH 目录写 wrapper（不用 symlink，避免路径解析问题）
 
-    # 方式 1: 符号链接到已有 PATH 目录
     local linked=false
     for dir in "$HOME/.local/bin" "$HOME/bin" /usr/local/bin; do
-        if echo ":$PATH:" | grep -q ":$dir:" && [[ -w "$dir" || -w "$(dirname "$dir")" ]]; then
+        if echo ":$PATH:" | grep -q ":$dir:"; then
             mkdir -p "$dir" 2>/dev/null || true
-            if ln -sf "$BIN_DIR/ops-agent" "$dir/ops-agent" 2>/dev/null; then
-                ok "命令链接: $dir/ops-agent"
+            if cat > "$dir/ops-agent" << WRAPPER 2>/dev/null; then
+#!/usr/bin/env bash
+INSTALL_DIR="$INSTALL_DIR"
+source "$INSTALL_DIR/.venv/bin/activate" 2>/dev/null
+exec python3 "$INSTALL_DIR/main.py" "\$@"
+WRAPPER
+                chmod +x "$dir/ops-agent"
+                ok "命令: $dir/ops-agent"
                 linked=true
                 break
             fi
