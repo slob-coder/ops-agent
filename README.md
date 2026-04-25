@@ -59,118 +59,62 @@
 
 ## 快速开始
 
-### 1. 一键安装（推荐）
+有两种使用方式，选一个适合你的：
+
+---
+
+### 方式一：本地安装（推荐）
+
+适合：长期运行、监控真实服务器、生产部署
+
+**Step 1 — 一键安装**
 
 ```bash
-# 一行命令安装（自动下载 + 创建 venv + 安装依赖 + 配置命令）
 curl -fsSL https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
-
-# 安装后，如果 ops-agent 命令未识别，执行：
-export PATH="$HOME/.ops-agent/bin:$PATH"
-
-# 然后初始化
-ops-agent init
 ```
 
-**脚本做了什么：**
-- 检查 Python ≥ 3.9 和 git
-- 克隆仓库到 `~/.ops-agent`
-- 创建独立 venv（不污染系统 Python）
-- 安装依赖 + 创建 `ops-agent` 命令
-- 自动把 `~/.ops-agent/bin` 加入 shell 配置（新终端生效）
+脚本自动完成：检查 Python ≥ 3.9 → 克隆到 `~/.ops-agent` → 创建独立 venv → 安装依赖 → 配置 `ops-agent` 命令。
 
-**自定义安装目录：**
-```bash
-OPS_AGENT_HOME=/opt/ops-agent curl -fsSL https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
-```
+> 安装后如果 `ops-agent` 命令未识别，开一个新终端，或执行 `export PATH="$HOME/.ops-agent/bin:$PATH"`。
+>
+> 自定义安装目录：`OPS_AGENT_HOME=/opt/ops-agent curl -fsSL ... | bash`
 
-### 2. 手动安装
-
-```bash
-git clone https://github.com/slob-coder/ops-agent.git && cd ops-agent
-pip install -r requirements.txt
-pip install -e .        # 装完就有 ops-agent 命令
-```
-
-依赖:`anthropic` `openai` `prompt_toolkit` `pyyaml` 四个,其余全部 stdlib.
-
-### 3. 一键配置
+**Step 2 — 初始化配置**
 
 ```bash
 ops-agent init
 ```
 
-交互式引导,自动生成所有配置文件:
+交互式引导，自动生成所有配置文件和 `.env`：
 
+```
 ? LLM Provider (anthropic): anthropic
 ? API Key: sk-ant-****
-? Target name (my-ssh): web-prod
+? Target name: web-prod
 ? Target type (ssh): ssh
 ? SSH address (user@host): ubuntu@10.0.0.10
-? SSH key path (optional): ~/.ssh/id_rsa
+? SSH key path (optional, Enter to skip):
 ? Configure a source repo? [y/N]: n
 ? Notification type (none): none
 ✅ notebook/config/targets.yaml
 ✅ notebook/config/limits.yaml
 ✅ notebook/config/permissions.md
+✅ notebook/.env
 🎉 Setup complete!
 ```
 
-**Docker 用户**用环境变量模式:
+LLM API Key 等凭据自动写入 `.env`，无需手动 export。
+
+**Step 3 — 启动**
 
 ```bash
-docker run -it --rm \
-  -e OPS_LLM_PROVIDER=anthropic \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  -e OPS_TARGET_TYPE=ssh \
-  -e OPS_TARGET_NAME=web-prod \
-  -e OPS_TARGET_HOST=ubuntu@10.0.0.10 \
-  -v $(pwd)/notebook:/app/notebook \
-  slobcoder/ops-agent init --from-env
+ops-agent                  # 用 init 生成的配置启动
+ops-agent --readonly       # 只读模式（只观察不动手）
+ops-agent check            # 校验配置是否完整
+ops-agent check --test-llm # 校验 + 测试 LLM 连通性
 ```
 
-### 4. 启动
-
-```bash
-# 监控本机（无需配置）
-ops-agent
-
-# 多目标（用 init 生成的配置）
-ops-agent --notebook ./notebook
-
-# 只读模式（只观察不动手）
-ops-agent --readonly
-
-# 校验配置是否完整
-ops-agent check
-
-# 校验 + 测试 LLM 连通性
-ops-agent check --test-llm
-```
-
-### 5. Docker 一键体验
-
-```bash
-# Demo 模式：只需 API key，自动生成 mock 配置
-docker run -it --rm \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  slobcoder/ops-agent demo
-
-# Docker 正式模式
-docker run -d \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  -v $(pwd)/notebook:/data/notebook \
-  -p 9876:9876 \
-  slobcoder/ops-agent
-```
-
-# Docker
-docker build -t ops-agent .
-docker run -it -e OPS_LLM_API_KEY=sk-ant-... \
-  -v $(pwd)/notebook:/data/notebook ops-agent
-```
-
-### 5. 和 Agent 对话
+**Step 4 — 和 Agent 对话**
 
 ```
 > status                       # 查看 Agent 状态
@@ -181,12 +125,81 @@ docker run -it -e OPS_LLM_API_KEY=sk-ant-... \
 > quit                          # 退出
 ```
 
-完整命令列表见 [USER_GUIDE.md](./USER_GUIDE.md).
+---
 
-### 6. 健康检查
+### 方式二：Docker
+
+适合：不想装 Python、CI/CD 环境、快速体验
+
+**快速体验（Demo 模式）**
+
+只需一个 API key，零配置：
 
 ```bash
-# Agent 启动后默认在 127.0.0.1:9876 暴露 HTTP 端点
+docker run -it --rm \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  slobcoder/ops-agent demo
+```
+
+Demo 模式自动生成 mock 配置，监控容器自身。进入后可以自然语言提问、查看状态。
+
+也可以指定 provider：
+
+```bash
+docker run -it --rm \
+  -e OPS_LLM_PROVIDER=openai \
+  -e OPS_LLM_API_KEY=sk-... \
+  -e OPS_LLM_MODEL=gpt-4o \
+  slobcoder/ops-agent demo
+```
+
+> Demo 监控的是容器内部，主要是巡检演示。要监控真实服务器，看下面「正式部署」。
+
+**Docker 正式部署**
+
+Step 1 — 创建配置目录：
+
+```bash
+mkdir -p notebook/config
+```
+
+Step 2 — 用环境变量一键生成配置：
+
+```bash
+docker run -it --rm \
+  -e OPS_LLM_PROVIDER=anthropic \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  -e OPS_TARGET_TYPE=ssh \
+  -e OPS_TARGET_NAME=web-prod \
+  -e OPS_TARGET_HOST=ubuntu@10.0.0.10 \
+  -v $(pwd)/notebook:/data/notebook \
+  slobcoder/ops-agent init --from-env
+```
+
+Step 3 — 校验：
+
+```bash
+docker run --rm \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  -v $(pwd)/notebook:/data/notebook \
+  slobcoder/ops-agent check --test-llm
+```
+
+Step 4 — 启动：
+
+```bash
+docker run -d \
+  -e OPS_LLM_API_KEY=sk-ant-... \
+  -v $(pwd)/notebook:/data/notebook \
+  -v ~/.ssh:/root/.ssh:ro \
+  -p 9876:9876 \
+  --name ops-agent \
+  slobcoder/ops-agent
+```
+
+健康检查：
+
+```bash
 curl localhost:9876/healthz   # JSON 状态快照
 curl localhost:9876/metrics   # Prometheus 格式 metrics
 ```
@@ -340,29 +353,6 @@ done
 | `OPS_REPO_DEPLOY_CMD` | | 部署命令 |
 | `OPS_REPO_GIT_HOST` | | Git 托管(github/gitlab) |
 | `OPS_NOTIFIER_TYPE` | | 通知类型(none/slack/dingtalk/feishu/feishu_app) |
-| `OPS_NOTIFIER_WEBHOOK_URL` | | 通知 Webhook URL |
-
-### ops-agent check（配置校验）
-
-```bash
-ops-agent check              # 校验配置完整性
-ops-agent check --test-llm   # 校验 + 测试 LLM 连通性
-```
-
-检查项：LLM 凭据、targets.yaml 格式和必填字段、limits.yaml、permissions.md、notifier.yaml。
-
-### ops-agent demo（Docker 体验）
-
-```bash
-docker run -it --rm -e OPS_LLM_API_KEY=sk-ant-... slobcoder/ops-agent demo
-```
-
-只需 API key，自动生成 mock 配置监控容器自身，零配置体验完整流程。
-
-### 其他
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
 | `OPS_NOTIFIER_WEBHOOK_URL` | (无) | 覆盖 notifier.yaml 中的 webhook,推荐用于生产 |
 
 ---
