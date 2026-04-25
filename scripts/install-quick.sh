@@ -90,17 +90,12 @@ install() {
 create_bin() {
     mkdir -p "$BIN_DIR"
 
-    # 主 wrapper
-    cat > "$BIN_DIR/ops-agent" << 'WRAPPER'
+    # 主 wrapper — 路径在安装时写死，不依赖运行时解析
+    cat > "$BIN_DIR/ops-agent" << WRAPPER
 #!/usr/bin/env bash
-# Resolve symlink to get real install directory
-SELF="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
-REAL_DIR="$(cd "$(dirname "$SELF")" && pwd)"
-VENVSRC="$REAL_DIR/../.venv/bin/activate"
-if [[ -f "$VENVSRC" ]]; then
-    source "$VENVSRC"
-fi
-exec python3 "$REAL_DIR/../main.py" "$@"
+INSTALL_DIR="$INSTALL_DIR"
+source "$INSTALL_DIR/.venv/bin/activate" 2>/dev/null
+exec python3 "$INSTALL_DIR/main.py" "\$@"
 WRAPPER
     chmod +x "$BIN_DIR/ops-agent"
 
