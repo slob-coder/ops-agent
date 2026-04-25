@@ -265,13 +265,22 @@ class FeishuBackend(ChannelBackend):
             logger.warning(f"FeishuBackend fetch bot info error: {e}")
 
     def _should_respond(self, event: dict, chat_type: str) -> bool:
-        """判断是否应响应此消息。私聊始终响应，群聊仅 @机器人 时响应"""
+        """判断是否应响应此消息。私聊始终响应，群聊仅 @机器人 或 @所有人 时响应"""
         if chat_type != "group":
             return True  # 私聊始终响应
 
         mentions = event.get("message", {}).get("mentions") or []
         if not mentions:
-            return False  # 群聊无 mentions，是普通消息或 @所有人，不响应
+            # 飞书 @所有人 不会产生 mention 条目，检查消息内容
+            content_json = event.get("message", {}).get("content", "{}")
+            try:
+                content = json.loads(content_json)
+                raw_text = content.get("text", "")
+            except (json.JSONDecodeError, TypeError):
+                raw_text = ""
+            if "@所有人" in raw_text:
+                return True
+            return False  # 普通群消息，无 @
 
         # 检查机器人是否在 mentions 中
         if self._bot_open_id:
