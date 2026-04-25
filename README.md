@@ -341,6 +341,72 @@ done
 | `OPS_REPO_GIT_HOST` | | Git 托管(github/gitlab) |
 | `OPS_NOTIFIER_TYPE` | | 通知类型(none/slack/dingtalk/feishu/feishu_app) |
 | `OPS_NOTIFIER_WEBHOOK_URL` | (无) | 覆盖 notifier.yaml 中的 webhook,推荐用于生产 |
+| `OPS_FEISHU_APP_ID` | | 飞书应用 App ID（feishu_app 模式） |
+| `OPS_FEISHU_APP_SECRET` | | 飞书应用 App Secret（feishu_app 模式） |
+| `OPS_FEISHU_CHAT_ID` | | 飞书群聊 chat_id（feishu_app 模式） |
+
+### 飞书通知配置
+
+OpsAgent 支持两种飞书通知方式：
+
+**方式一：Webhook 机器人（简单，推荐入门）**
+
+1. 在飞书群聊中添加「自定义机器人」，获取 Webhook URL
+2. 运行 `ops-agent init`，通知类型选 `feishu`，填入 Webhook URL
+3. 或手动创建 `notebook/config/notifier.yaml`：
+
+```yaml
+type: feishu
+webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+```
+
+> Webhook 机器人只能向群聊发消息，无法接收回复。
+
+**方式二：自建应用机器人（功能完整，支持双向交互）**
+
+1. 在[飞书开放平台](https://open.feishu.cn/app)创建企业自建应用
+2. 添加「机器人」能力，获取 App ID 和 App Secret
+3. 在应用的「权限管理」中开通：`im:message:send_as_bot`
+4. 创建群聊，将机器人加入群，获取群聊的 `chat_id`（群设置 → 群名片 → 复制群链接，`chat_id` 在 URL 中）
+5. 配置 `notebook/config/notifier.yaml`：
+
+```yaml
+type: feishu_app
+feishu_app:
+  app_id: "cli_xxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxx"
+  chat_id: "oc_xxxxxxxx"
+```
+
+6. **安全建议**：`app_secret` 不要提交到 git，用环境变量覆盖：
+
+```bash
+export OPS_FEISHU_APP_ID="cli_xxxxxxxx"
+export OPS_FEISHU_APP_SECRET="xxxxxxxxxxxxxxxx"
+export OPS_FEISHU_CHAT_ID="oc_xxxxxxxx"
+```
+
+**启用飞书双向交互**（可选）：
+
+Agent 可以接收飞书群聊中 @它的消息并回复：
+
+```yaml
+feishu_app:
+  app_id: "cli_xxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxx"
+  chat_id: "oc_xxxxxxxx"
+  interactive:
+    enabled: true
+    callback_port: 9877      # 飞书事件回调端口（需公网可达）
+    encrypt_key: ""          # 飞书开放平台 → 事件订阅 → 加密 key
+    verification_token: ""   # 飞书开放平台 → 事件订阅 → 验证 token
+```
+
+在飞书开放平台配置事件订阅：
+- 请求地址：`http://<你的服务器IP>:9877/feishu/event`
+- 订阅事件：`im.message.receive_v1`（接收消息）
+
+> 双向交互需要服务器有公网 IP，飞书回调才能到达。
 
 ---
 

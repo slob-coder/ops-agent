@@ -423,7 +423,7 @@ max_auto_merges_per_day: 5
 `notebook/config/notifier.yaml`(可参考 `notifier.yaml.example`):
 
 ```yaml
-type: slack                # slack | dingtalk | feishu | none
+type: slack                # slack | dingtalk | feishu | feishu_app | none
 webhook_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
 
 notify_on:
@@ -449,6 +449,92 @@ export OPS_NOTIFIER_WEBHOOK_URL="https://hooks.slack.com/services/..."
 ```
 
 `quiet_hours` 支持跨日(`22:00 → 08:00`)和同日(`13:00 → 14:00`)两种.`critical` 级通知不受免打扰约束.
+
+#### 飞书配置
+
+##### 方式一：Webhook 机器人（简单，推荐入门）
+
+1. 在飞书群聊中点击「设置 → 群机器人 → 添加机器人 → 自定义机器人」
+2. 复制 Webhook URL（格式：`https://open.feishu.cn/open-apis/bot/v2/hook/xxx`）
+3. 配置 `notifier.yaml`：
+
+```yaml
+type: feishu
+webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+```
+
+或运行 `ops-agent init`，通知类型选 `feishu`，输入 Webhook URL。
+
+> Webhook 机器人只能向群聊推送消息，无法接收回复。
+
+##### 方式二：自建应用机器人（功能完整，支持双向交互）
+
+**前置条件**：飞书开放平台管理员权限。
+
+**步骤 1 — 创建应用**
+
+1. 登录[飞书开放平台](https://open.feishu.cn/app)，点击「创建企业自建应用」
+2. 填写应用名称（如 `OpsAgent`）和描述
+3. 记录 **App ID**（`cli_xxx`）和 **App Secret**
+
+**步骤 2 — 添加机器人能力**
+
+1. 进入应用 → 「添加应用能力」→ 勾选「机器人」
+2. 在「权限管理」中搜索并开通以下权限：
+   - `im:message:send_as_bot`（以机器人身份发送消息）
+   - `im:message`（获取与发送单聊、群组消息）
+   - `im:chat`（获取群组信息）
+
+**步骤 3 — 获取 chat_id**
+
+1. 创建飞书群聊（或将已有群聊用于接收 Agent 通知）
+2. 在群设置中添加机器人（搜索你刚创建的应用名）
+3. 获取 `chat_id`：群设置 → 群名片 → 复制群链接，URL 中 `/chat/` 后面的就是 `chat_id`（格式：`oc_xxx`）
+
+**步骤 4 — 配置 notifier.yaml**
+
+```yaml
+type: feishu_app
+feishu_app:
+  app_id: "cli_xxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxx"
+  chat_id: "oc_xxxxxxxx"
+```
+
+**安全建议**：`app_secret` 不要写入 git，用环境变量覆盖：
+
+```bash
+export OPS_FEISHU_APP_ID="cli_xxxxxxxx"
+export OPS_FEISHU_APP_SECRET="xxxxxxxxxxxxxxxx"
+export OPS_FEISHU_CHAT_ID="oc_xxxxxxxx"
+```
+
+**步骤 5 — 启用双向交互（可选）**
+
+启用后，在飞书群中 @机器人 发消息，Agent 可以接收并回复：
+
+1. 在 `notifier.yaml` 中添加 `interactive` 配置：
+
+```yaml
+type: feishu_app
+feishu_app:
+  app_id: "cli_xxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxx"
+  chat_id: "oc_xxxxxxxx"
+  interactive:
+    enabled: true
+    callback_port: 9877       # 飞书事件回调端口
+    encrypt_key: ""           # 开放平台 → 事件订阅 → Encrypt Key
+    verification_token: ""    # 开放平台 → 事件订阅 → Verification Token
+```
+
+2. 在飞书开放平台配置事件订阅：
+   - 请求地址：`http://<你的公网IP>:9877/feishu/event`
+   - 订阅事件：`im.message.receive_v1`
+
+3. 确保服务器端口 9877 可被飞书服务器访问（需要公网 IP 或反向代理）
+
+> 双向交互目前仅支持飞书自建应用模式（`feishu_app`），Webhook 机器人不支持。
 
 ---
 
