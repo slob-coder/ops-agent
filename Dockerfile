@@ -11,11 +11,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /data/notebook/config /root/.ssh && \
+RUN pip install --no-cache-dir -e . && \
+    mkdir -p /data/notebook/config /root/.ssh && \
     git config --global user.name "OpsAgent" && \
     git config --global user.email "agent@ops" && \
     echo "StrictHostKeyChecking=no" >> /root/.ssh/config
 
 VOLUME /data/notebook
 
-ENTRYPOINT ["python", "main.py", "--notebook", "/data/notebook"]
+ENTRYPOINT ["ops-agent", "--notebook", "/data/notebook"]

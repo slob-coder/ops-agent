@@ -68,10 +68,20 @@ pip install -r requirements.txt
 
 依赖:`anthropic` `openai` `prompt_toolkit` `pyyaml` 四个,其余全部 stdlib.
 
+**安装后可直接使用 `ops-agent` 命令:**
+
+```bash
+# 方式一: pip 可编辑安装(推荐，装完就有 ops-agent 命令)
+pip install -e .
+
+# 方式二: 无需安装，用脚本
+./scripts/ops-agent --help
+```
+
 ### 2. 一键配置（推荐）
 
 ```bash
-python main.py init
+ops-agent init
 ```
 
 交互式引导,自动生成所有配置文件:
@@ -107,8 +117,6 @@ docker run -it --rm \
   slobcoder/ops-agent init --from-env
 ```
 
-`init` 支持的完整环境变量列表见 [USER_GUIDE.md](./USER_GUIDE.md).
-
 ### 3. 手动配置（可选）
 
 如果不想用 `init`,也可以手动设置:
@@ -118,7 +126,7 @@ docker run -it --rm \
 export OPS_LLM_API_KEY="sk-ant-..."
 
 # 目标 — 命令行参数
-python main.py --target user@192.168.1.100
+ops-agent --target user@192.168.1.100
 
 # 或手写 notebook/config/targets.yaml（参考 targets.yaml.example）
 ```
@@ -127,13 +135,13 @@ python main.py --target user@192.168.1.100
 
 ```bash
 # 监控本机（无需配置）
-python main.py
+ops-agent
 
 # 多目标（用 init 生成的配置）
-python main.py --notebook ./notebook
+ops-agent --notebook ./notebook
 
 # 只读模式（只观察不动手）
-python main.py --readonly
+ops-agent --readonly
 
 # Docker
 docker build -t ops-agent .

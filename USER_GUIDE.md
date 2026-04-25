@@ -41,7 +41,7 @@
 ## 1. 安装与依赖
 
 **系统要求:**
-- Python ≥ 3.10
+- Python ≥ 3.9
 - git ≥ 2.20(本地仓库 + 补丁应用)
 - 可选:`gh` CLI(GitHub PR 工作流)/ `glab` CLI(GitLab)
 - 可选:`docker` / `kubectl`(对应目标类型)
@@ -62,6 +62,18 @@ git clone <repo-url> && cd ops-agent
 pip install -r requirements.txt
 ```
 
+**安装 `ops-agent` 命令（推荐）:**
+
+```bash
+# 方式一: pip 可编辑安装（装完就有 ops-agent 命令）
+pip install -e .
+
+# 方式二: 无需安装，直接用脚本
+./scripts/ops-agent --help
+```
+
+安装后所有示例中的 `ops-agent` 命令都可用。未安装则用 `python main.py` 替代。
+
 ---
 
 ## 2. 配置
@@ -73,7 +85,7 @@ OpsAgent 的所有配置都集中在 `notebook/config/` 目录下.除了 LLM 凭
 如果你是第一次使用,推荐用交互式引导自动生成所有配置:
 
 ```bash
-python main.py init
+ops-agent init
 ```
 
 引导流程:
@@ -118,7 +130,7 @@ python main.py init
 
 ━━━ Next Steps ━━━
   1. Review:  cat notebook/config/targets.yaml
-  2. Start:   python main.py --notebook ./notebook
+  2. Start:   ops-agent --notebook ./notebook
 
 🎉 Setup complete!
 ```
@@ -135,7 +147,7 @@ python main.py init
 **Docker / CI 环境**用 `--from-env` 模式,从环境变量读取配置:
 
 ```bash
-python main.py init --from-env
+ops-agent init --from-env
 ```
 
 缺少必填环境变量时会报错退出.完整环境变量列表:
@@ -448,16 +460,16 @@ export OPS_NOTIFIER_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
 ```bash
 # 单目标快速启动(命令行参数)
-python main.py --target user@host --notebook ./notebook
+ops-agent --target user@host --notebook ./notebook
 
 # 多目标(从 targets.yaml 读)
-python main.py --notebook ./notebook
+ops-agent --notebook ./notebook
 
 # 只读模式(只观察不动手)
-python main.py --readonly
+ops-agent --readonly
 
 # 调试模式
-python main.py --debug
+ops-agent --debug
 ```
 
 **Docker**:
@@ -469,6 +481,21 @@ docker run -it \
   -e OPS_NOTIFIER_WEBHOOK_URL=https://... \
   -v $(pwd)/notebook:/data/notebook \
   -v ~/.ssh:/root/.ssh:ro \
+  -p 9876:9876 \
+  ops-agent
+```
+
+Docker 镜像内置 `ops-agent` 命令:
+
+```bash
+# Docker 中初始化
+docker run -it -e OPS_LLM_API_KEY=sk-ant-... \
+  -v $(pwd)/notebook:/app/notebook \
+  ops-agent init --from-env
+
+# Docker 中运行
+docker run -d -e OPS_LLM_API_KEY=sk-ant-... \
+  -v $(pwd)/notebook:/app/notebook \
   -p 9876:9876 \
   ops-agent
 ```

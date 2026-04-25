@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ops-agent"
+version = "2.0.0"
+description = "OpsAgent — 数字运维员工，AI 驱动的自主运维 Agent"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "prompt_toolkit>=3.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+ops-agent = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+src = ["prompts/*.md"]

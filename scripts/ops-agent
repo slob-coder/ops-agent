@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# ops-agent CLI wrapper — 无需 pip install，直接用
+# 用法: ./scripts/ops-agent init
+#       ./scripts/ops-agent --notebook ./notebook
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+exec python3 "$PROJECT_DIR/main.py" "$@"

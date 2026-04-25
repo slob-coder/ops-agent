@@ -4,20 +4,25 @@ OpsAgent — 数字运维员工
 一个实时在岗、会成长、在人类监督下工作的运维 Agent。
 
 用法:
+  # 安装命令行工具
+  pip install -e .
+
   # 初始化配置
-  python main.py init
+  ops-agent init
 
   # 从环境变量初始化（Docker / CI）
-  python main.py init --from-env
+  ops-agent init --from-env
 
   # 本地模式（监控本机）
-  python main.py --notebook ./notebook
+  ops-agent
 
   # SSH 远程模式
-  python main.py --notebook ./notebook --target user@192.168.1.100
+  ops-agent --target user@192.168.1.100
 
   # 只读模式（不执行任何修改）
-  python main.py --notebook ./notebook --readonly
+  ops-agent --readonly
+
+  # 未安装时用 python main.py 替代 ops-agent
 """
 
 import os
