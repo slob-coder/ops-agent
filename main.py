@@ -4,6 +4,12 @@ OpsAgent — 数字运维员工
 一个实时在岗、会成长、在人类监督下工作的运维 Agent。
 
 用法:
+  # 初始化配置
+  python main.py init
+
+  # 从环境变量初始化（Docker / CI）
+  python main.py init --from-env
+
   # 本地模式（监控本机）
   python main.py --notebook ./notebook
 
@@ -26,8 +32,20 @@ from src.infra.tools import TargetConfig
 from src.core import OpsAgent  # noqa: F401
 
 
-def main():
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OpsAgent — 数字运维员工")
+    subparsers = parser.add_subparsers(dest="command")
+
+    # ── init 子命令 ──
+    init_parser = subparsers.add_parser(
+        "init", help="Interactive setup wizard",
+        description="Generate config files with an interactive guide",
+    )
+    init_parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
+    init_parser.add_argument("--from-env", action="store_true",
+                             help="Read all config from env vars, fail on missing")
+
+    # ── 运行模式参数（无子命令时）──
     parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
     parser.add_argument("--targets", default="",
                         help="targets.yaml 路径(多目标模式,推荐)")
@@ -39,6 +57,26 @@ def main():
                         help="使用密码认证(将交互式提示输入,需要 sshpass)")
     parser.add_argument("--readonly", action="store_true", help="只读模式")
     parser.add_argument("--debug", action="store_true", help="调试模式")
+
+    return parser
+
+
+def main():
+    # 手动解析以支持子命令和主参数共存
+    # 先检查是否是 init 子命令
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        parser = argparse.ArgumentParser(description="ops-agent init")
+        parser.add_argument("command", nargs="?", default="init")
+        parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
+        parser.add_argument("--from-env", action="store_true",
+                            help="Read all config from env vars, fail on missing")
+        args = parser.parse_args()
+        from src.init import run_init
+        run_init(notebook_path=args.notebook, from_env=args.from_env)
+        return
+
+    parser = _build_parser()
     args = parser.parse_args()
 
     if args.debug:
