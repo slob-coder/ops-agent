@@ -98,7 +98,7 @@ VENVSRC="$SCRIPT_DIR/../.venv/bin/activate"
 if [[ -f "$VENVSRC" ]]; then
     source "$VENVSRC"
 fi
-exec python "$SCRIPT_DIR/../main.py" "$@"
+exec python3 "$SCRIPT_DIR/../main.py" "$@"
 WRAPPER
     chmod +x "$BIN_DIR/ops-agent"
 
