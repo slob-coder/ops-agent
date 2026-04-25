@@ -99,15 +99,20 @@ def main():
     # 扫描 argv 查找子命令（支持子命令不在第一个位置的情况）
     import sys
     subcmd = None
-    for arg in sys.argv[1:]:
+    skip_next = False
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if skip_next:
+            skip_next = False
+            continue
         if arg in ("init", "check"):
             subcmd = arg
             break
-        elif arg.startswith("-"):
-            # 跳过 flag 和它的值
+        elif arg.startswith("-") and not arg.startswith("--from-env") and not arg.startswith("--test-llm"):
+            # 带 value 的 flag，跳过下一个参数
             if arg in ("--notebook", "--targets", "--target", "--key", "--port",
                        "--targets-file", "--model"):
-                continue  # next arg is the value, skip it in the next iteration
+                skip_next = True
+            # boolean flags (--readonly, --debug, --password) 不需要跳过
         else:
             break  # unknown positional, stop
 
