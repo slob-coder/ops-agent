@@ -96,9 +96,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main():
     # 手动解析以支持子命令和主参数共存
-    # 先检查是否是 init 子命令
+    # 扫描 argv 查找子命令（支持子命令不在第一个位置的情况）
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "init":
+    subcmd = None
+    for arg in sys.argv[1:]:
+        if arg in ("init", "check"):
+            subcmd = arg
+            break
+        elif arg.startswith("-"):
+            # 跳过 flag 和它的值
+            if arg in ("--notebook", "--targets", "--target", "--key", "--port",
+                       "--targets-file", "--model"):
+                continue  # next arg is the value, skip it in the next iteration
+        else:
+            break  # unknown positional, stop
+
+    if subcmd == "init":
         parser = argparse.ArgumentParser(description="ops-agent init")
         parser.add_argument("command", nargs="?", default="init")
         parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
@@ -109,7 +122,7 @@ def main():
         run_init(notebook_path=args.notebook, from_env=args.from_env)
         return
 
-    if len(sys.argv) > 1 and sys.argv[1] == "check":
+    if subcmd == "check":
         parser = argparse.ArgumentParser(description="ops-agent check")
         parser.add_argument("command", nargs="?", default="check")
         parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
