@@ -21,7 +21,8 @@ services:
       - ~/.ssh:/root/.ssh:ro
       - /var/run/docker.sock:/var/run/docker.sock  # 访问宿主机 Docker
     ports:
-      - "9876:9876"
+      - "9876:9876"    # Agent HTTP 健康检查 + metrics
+      - "9877:9877"    # 飞书事件回调（启用交互模式时需要）
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9876/healthz"]
       interval: 30s
