@@ -214,7 +214,7 @@ class ParsersMixin:
 
         data = self._extract_json(response)
         if not data or "steps" not in data:
-            logger.error("plan 输出不是合法 JSON")
+            logger.error(f"plan 输出不是合法 JSON, response={response[:500]}")
             return None
 
         steps = data.get("steps", [])
