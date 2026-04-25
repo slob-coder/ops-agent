@@ -104,6 +104,7 @@ class FeishuBackend(ChannelBackend):
         self._seen_events: dict = {}  # event_id -> timestamp, dedup
         self._running = True
         self._waiting_approval = False
+        self._bot_open_id: str = ""  # 启动时动态获取
 
     # ──────────── ChannelBackend 接口 ────────────
 
@@ -112,6 +113,9 @@ class FeishuBackend(ChannelBackend):
         self._inbox = inbox
         self._approval_queue = approval_queue
         self._interrupted = interrupted
+
+        # 动态获取机器人 open_id
+        self._fetch_bot_open_id()
 
         # 启动 HTTP 回调服务器
         backend = self
@@ -160,8 +164,15 @@ class FeishuBackend(ChannelBackend):
                 if event_type == "im.message.receive_v1":
                     msg_type = event.get("message", {}).get("message_type", "")
                     chat_id = event.get("message", {}).get("chat_id", "")
-                    # 只处理配置的 chat_id（或私聊）
-                    if backend.chat_id and chat_id != backend.chat_id:
+                    chat_type = event.get("message", {}).get("chat_type", "")
+
+                    # 群聊只响应 @机器人 的消息，私聊始终响应
+                    if not backend._should_respond(event, chat_type):
+                        self._send_ok()
+                        return
+
+                    # 只处理配置的 chat_id（私聊不过滤）
+                    if chat_type != "p2p" and backend.chat_id and chat_id != backend.chat_id:
                         self._send_ok()
                         return
 
@@ -231,6 +242,47 @@ class FeishuBackend(ChannelBackend):
     def set_waiting_approval(self, value: bool) -> None:
         """HumanChannel 同步等待批准状态"""
         self._waiting_approval = value
+
+    def _fetch_bot_open_id(self) -> None:
+        """启动时调用飞书 API 获取机器人自身的 open_id"""
+        token = self._token_mgr.get_token()
+        if not token:
+            logger.warning("FeishuBackend: failed to fetch bot open_id (no token)")
+            return
+        req = Request(
+            "https://open.feishu.cn/open-apis/bot/v3/info/",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            if data.get("code") == 0:
+                self._bot_open_id = data.get("bot", {}).get("open_id", "")
+                logger.info(f"FeishuBackend bot open_id: {self._bot_open_id or '(empty)'}")
+            else:
+                logger.warning(f"FeishuBackend fetch bot info failed: {data.get('msg')}")
+        except Exception as e:
+            logger.warning(f"FeishuBackend fetch bot info error: {e}")
+
+    def _should_respond(self, event: dict, chat_type: str) -> bool:
+        """判断是否应响应此消息。私聊始终响应，群聊仅 @机器人 时响应"""
+        if chat_type != "group":
+            return True  # 私聊始终响应
+
+        mentions = event.get("message", {}).get("mentions") or []
+        if not mentions:
+            return False  # 群聊无 mentions，是普通消息或 @所有人，不响应
+
+        # 检查机器人是否在 mentions 中
+        if self._bot_open_id:
+            for m in mentions:
+                if m.get("id", {}).get("open_id") == self._bot_open_id:
+                    return True
+            return False  # @了别人，没 @机器人
+
+        # fallback: 没拿到 bot open_id 时，只响应有 mentions 的消息（宽松模式）
+        logger.debug("FeishuBackend: bot open_id unknown, responding to all mentioned messages")
+        return True
 
     def _on_message(self, text: str):
         """收到飞书消息，路由到 inbox 或 approval_queue"""
