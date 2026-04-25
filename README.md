@@ -136,72 +136,56 @@ ops-agent check --test-llm # 校验 + 测试 LLM 连通性
 只需一个 API key，零配置：
 
 ```bash
-docker run -it --rm \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  slobcoder/ops-agent demo
+git clone https://github.com/slob-coder/ops-agent.git && cd ops-agent/docker
+cp .env.example .env
+# 编辑 .env，只需填一行: OPS_LLM_API_KEY=sk-ant-...
+docker compose run --rm ops-agent demo
 ```
 
 Demo 模式自动生成 mock 配置，监控容器自身。进入后可以自然语言提问、查看状态。
-
-也可以指定 provider：
-
-```bash
-docker run -it --rm \
-  -e OPS_LLM_PROVIDER=openai \
-  -e OPS_LLM_API_KEY=sk-... \
-  -e OPS_LLM_MODEL=gpt-4o \
-  slobcoder/ops-agent demo
-```
 
 > Demo 监控的是容器内部，主要是巡检演示。要监控真实服务器，看下面「正式部署」。
 
 **Docker 正式部署**
 
-Step 1 — 创建配置目录：
+Step 1 — 克隆并配置：
 
 ```bash
-mkdir -p notebook/config
+git clone https://github.com/slob-coder/ops-agent.git && cd ops-agent/docker
+cp .env.example .env
 ```
 
-Step 2 — 用环境变量一键生成配置：
+编辑 `.env`，填写你的配置。最少只需两行：
 
-```bash
-docker run -it --rm \
-  -e OPS_LLM_PROVIDER=anthropic \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  -e OPS_TARGET_TYPE=ssh \
-  -e OPS_TARGET_NAME=web-prod \
-  -e OPS_TARGET_HOST=ubuntu@10.0.0.10 \
-  -v $(pwd)/notebook:/data/notebook \
-  slobcoder/ops-agent init --from-env
+```env
+OPS_LLM_API_KEY=sk-ant-...        # 必填：LLM API Key
+OPS_TARGET_TYPE=local             # local=监控容器自身 | ssh=远程服务器
 ```
 
-Step 3 — 校验：
+如果要监控 SSH 服务器：
 
-```bash
-docker run --rm \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  -v $(pwd)/notebook:/data/notebook \
-  slobcoder/ops-agent check --test-llm
+```env
+OPS_LLM_API_KEY=sk-ant-...
+OPS_TARGET_TYPE=ssh
+OPS_TARGET_HOST=ubuntu@10.0.0.10  # SSH 地址
+OPS_TARGET_KEY_FILE=/root/.ssh/id_rsa  # 密钥（已自动挂载 ~/.ssh）
 ```
 
-Step 4 — 启动：
+> `.env.example` 中有每个参数的详细说明和示例。
+
+Step 2 — 初始化并校验：
 
 ```bash
-docker run -d \
-  -e OPS_LLM_API_KEY=sk-ant-... \
-  -v $(pwd)/notebook:/data/notebook \
-  -v ~/.ssh:/root/.ssh:ro \
-  -p 9876:9876 \
-  --name ops-agent \
-  slobcoder/ops-agent
+docker compose run --rm ops-agent init --from-env   # 生成配置文件
+docker compose run --rm ops-agent check --test-llm   # 校验 + 测试连通性
 ```
 
-健康检查：
+Step 3 — 启动：
 
 ```bash
-curl localhost:9876/healthz   # JSON 状态快照
-curl localhost:9876/metrics   # Prometheus 格式 metrics
+docker compose up -d               # 后台启动
+docker compose logs -f             # 查看日志
+curl localhost:9876/healthz        # 健康检查
 ```
 
 ---
@@ -270,6 +254,9 @@ ops-agent/
 │   ├── incidents/
 │   ├── lessons/
 │   └── audit/
+├── docker/                        # Docker 部署
+│   ├── compose.yaml               # Docker Compose 配置
+│   └── .env.example               # 环境变量模板（带注释）
 ├── tests/                        # 10 个测试文件
 ├── ops-agent.service             # systemd unit
 ├── scripts/

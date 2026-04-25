@@ -1,0 +1,29 @@
+# ═══════════════════════════════════════════════════════════════
+# OpsAgent Docker Compose
+# ═══════════════════════════════════════════════════════════════
+#
+# 用法:
+#   1. 复制 .env.example 为 .env，填入你的配置
+#   2. docker compose up -d
+#   3. docker compose logs -f          # 查看日志
+#   4. docker compose exec ops-agent bash  # 进入容器
+#
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  ops-agent:
+    build: ..
+    container_name: ops-agent
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./notebook:/data/notebook
+      - ~/.ssh:/root/.ssh:ro
+    ports:
+      - "9876:9876"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9876/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
