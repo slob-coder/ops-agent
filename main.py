@@ -37,6 +37,34 @@ from src.infra.tools import TargetConfig
 from src.core import OpsAgent  # noqa: F401
 
 
+def _load_dotenv():
+    """自动加载 notebook/.env 文件到环境变量（不覆盖已有值）"""
+    import sys
+    notebook = "./notebook"
+    # 从命令行参数获取 notebook 路径
+    for i, arg in enumerate(sys.argv):
+        if arg == "--notebook" and i + 1 < len(sys.argv):
+            notebook = sys.argv[i + 1]
+            break
+
+    env_path = Path(notebook) / ".env"
+    if not env_path.exists():
+        return
+
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OpsAgent — 数字运维员工")
     subparsers = parser.add_subparsers(dest="command")
@@ -80,6 +108,9 @@ def main():
         from src.init import run_init
         run_init(notebook_path=args.notebook, from_env=args.from_env)
         return
+
+    # 自动加载 .env 文件
+    _load_dotenv()
 
     parser = _build_parser()
     args = parser.parse_args()
