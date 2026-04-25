@@ -88,6 +88,18 @@ targets:
     host: ubuntu@10.0.0.20
 ```
 
+## 注意事项
+
+### Docker socket（监控宿主机容器）
+
+compose.yaml 默认挂载了 `/var/run/docker.sock`，容器内的 Agent 可以直接操作宿主机 Docker（`docker ps`、`docker logs` 等）。
+
+如果不需要此功能，注释掉对应行即可。
+
+### SSH 访问
+
+`~/.ssh` 目录以只读方式挂载，Agent 可以用宿主机的 SSH 密钥连接远程服务器。
+
 ## 自定义镜像
 
 ```bash

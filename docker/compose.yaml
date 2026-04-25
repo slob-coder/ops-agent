@@ -19,6 +19,7 @@ services:
     volumes:
       - ./notebook:/data/notebook
       - ~/.ssh:/root/.ssh:ro
+      - /var/run/docker.sock:/var/run/docker.sock  # 访问宿主机 Docker
     ports:
       - "9876:9876"
     healthcheck:
