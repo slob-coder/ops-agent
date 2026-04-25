@@ -27,9 +27,9 @@ class TestTargetsYaml:
     def test_ssh_target_minimal(self):
         target = {"type": "ssh", "name": "my-ssh", "host": "ubuntu@10.0.0.1"}
         result = _generate_targets_yaml(target, None)
-        assert 'name: "my-ssh"' in result
+        assert "name: my-ssh" in result
         assert "type: ssh" in result
-        assert 'host: "ubuntu@10.0.0.1"' in result
+        assert "host: ubuntu@10.0.0.1" in result
         assert "source_repos" not in result
 
     def test_ssh_target_with_key(self):
@@ -40,7 +40,7 @@ class TestTargetsYaml:
         }
         result = _generate_targets_yaml(target, None)
         assert "port: 2222" in result
-        assert 'key_file: "~/.ssh/id_rsa"' in result
+        assert "key_file: ~/.ssh/id_rsa" in result
         assert "criticality: high" in result
 
     def test_ssh_target_default_port_omitted(self):
@@ -83,14 +83,46 @@ class TestTargetsYaml:
         }
         result = _generate_targets_yaml(target, repo)
         assert "source_repos:" in result
-        assert 'name: "backend"' in result
+        assert "name: backend" in result
         assert "language: python" in result
-        assert 'build_cmd: "make build"' in result
+        assert "build_cmd: make build" in result
 
     def test_with_description(self):
         target = {"type": "ssh", "name": "t", "host": "u@h", "description": "prod server"}
         result = _generate_targets_yaml(target, None)
-        assert 'description: "prod server"' in result
+        assert "description: prod server" in result
+
+    def test_yaml_parseable(self):
+        """生成的 YAML 能被 yaml.safe_load 正确解析"""
+        import yaml
+        target = {
+            "type": "ssh", "name": "web-prod", "host": "ubuntu@10.0.0.10",
+            "key_file": "~/.ssh/id_rsa", "criticality": "high",
+            "description": "生产 web 服务器",
+        }
+        repo = {
+            "name": "backend", "path": "/opt/src/backend",
+            "repo_url": "git@github.com:co/backend.git",
+            "branch": "main", "language": "python",
+            "build_cmd": "make build",
+        }
+        result = _generate_targets_yaml(target, repo)
+        data = yaml.safe_load(result)
+        assert len(data["targets"]) == 1
+        t = data["targets"][0]
+        assert t["name"] == "web-prod"
+        assert t["host"] == "ubuntu@10.0.0.10"
+        assert t["key_file"] == "~/.ssh/id_rsa"
+        assert t["source_repos"][0]["repo_url"] == "git@github.com:co/backend.git"
+
+    def test_no_double_quotes(self):
+        """确保不会出现双引号问题"""
+        target = {
+            "type": "docker", "name": "local-docker",
+            "description": "本地 docker-compose 项目",
+        }
+        result = _generate_targets_yaml(target, None)
+        assert '""' not in result  # 不应该有连续双引号
 
 
 class TestLimitsYaml:
@@ -209,6 +241,11 @@ class TestRunInit:
             assert "test-server" in content
             assert "ubuntu@10.0.0.1" in content
 
+            # 验证 YAML 可解析
+            import yaml
+            data = yaml.safe_load(content)
+            assert data["targets"][0]["host"] == "ubuntu@10.0.0.1"
+
             # 检查 limits.yaml
             limits_path = config_dir / "limits.yaml"
             assert limits_path.exists()
@@ -254,7 +291,7 @@ class TestRunInit:
 
             content = (Path(tmpdir) / "config" / "targets.yaml").read_text()
             assert "source_repos:" in content
-            assert 'name: "backend"' in content
+            assert "name: backend" in content
             assert "language: python" in content
 
     def test_existing_limits_not_overwritten(self):
