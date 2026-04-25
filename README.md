@@ -59,35 +59,48 @@
 
 ## 快速开始
 
-### 1. 安装
+### 1. 一键安装（推荐）
 
 ```bash
-git clone <repo-url> && cd ops-agent
+# 一行命令安装（自动下载 + 创建 venv + 安装依赖 + 配置命令）
+curl -fsSL https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
+
+# 或用 wget
+wget -qO- https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
+
+# 安装完成后
+ops-agent init
+```
+
+**脚本做了什么：**
+- 检查 Python ≥ 3.9 和 git
+- 克隆仓库到 `~/.ops-agent`
+- 创建独立 venv（不污染系统 Python）
+- 安装依赖 + `ops-agent` 命令
+- 创建 `~/.local/bin/ops-agent` 符号链接
+
+**自定义安装目录：**
+```bash
+OPS_AGENT_HOME=/opt/ops-agent curl -fsSL https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
+```
+
+### 2. 手动安装
+
+```bash
+git clone https://github.com/slob-coder/ops-agent.git && cd ops-agent
 pip install -r requirements.txt
+pip install -e .        # 装完就有 ops-agent 命令
 ```
 
 依赖:`anthropic` `openai` `prompt_toolkit` `pyyaml` 四个,其余全部 stdlib.
 
-**安装后可直接使用 `ops-agent` 命令:**
-
-```bash
-# 方式一: pip 可编辑安装(推荐，装完就有 ops-agent 命令)
-pip install -e .
-
-# 方式二: 无需安装，用脚本
-./scripts/ops-agent --help
-```
-
-### 2. 一键配置（推荐）
+### 3. 一键配置
 
 ```bash
 ops-agent init
 ```
 
 交互式引导,自动生成所有配置文件:
-
-```
-🚀 Welcome to ops-agent setup!
 
 ? LLM Provider (anthropic): anthropic
 ? API Key: sk-ant-****
@@ -112,23 +125,8 @@ docker run -it --rm \
   -e OPS_TARGET_TYPE=ssh \
   -e OPS_TARGET_NAME=web-prod \
   -e OPS_TARGET_HOST=ubuntu@10.0.0.10 \
-  -e OPS_TARGET_KEY_FILE=/root/.ssh/id_rsa \
   -v $(pwd)/notebook:/app/notebook \
   slobcoder/ops-agent init --from-env
-```
-
-### 3. 手动配置（可选）
-
-如果不想用 `init`,也可以手动设置:
-
-```bash
-# LLM — 通过环境变量
-export OPS_LLM_API_KEY="sk-ant-..."
-
-# 目标 — 命令行参数
-ops-agent --target user@192.168.1.100
-
-# 或手写 notebook/config/targets.yaml（参考 targets.yaml.example）
 ```
 
 ### 4. 启动
