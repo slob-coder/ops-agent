@@ -8,6 +8,7 @@ ContextLimits — 上下文窗口限制
 """
 
 import os
+from typing import Optional
 import logging
 from dataclasses import dataclass
 
@@ -95,7 +96,7 @@ class ContextLimitsConfig:
 
 # ── 模块级单例（懒加载） ──
 
-_instance: ContextLimitsConfig | None = None
+_instance: Optional["ContextLimitsConfig"] = None
 
 
 def get_context_limits(notebook_path: str = "") -> ContextLimitsConfig:

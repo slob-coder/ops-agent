@@ -1,11 +1,24 @@
 # OpsAgent Notifier 配置示例
 # 复制为 notebook/config/notifier.yaml 并填写实际值
 
-# 类型: slack | dingtalk | feishu | none
-type: slack
+# 类型: slack | dingtalk | feishu | feishu_app | none
+type: feishu_app
 
 # Webhook URL — 也可以通过 OPS_NOTIFIER_WEBHOOK_URL 环境变量覆盖(更安全)
-webhook_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+# webhook_url 仅用于 type: slack / dingtalk / feishu
+webhook_url: ""
+
+# 飞书自建应用机器人（type: feishu_app 时使用）
+feishu_app:
+  app_id: "cli_xxx"
+  app_secret: "xxx"
+  chat_id: "oc_xxx"
+  # 交互通道：启用后飞书可作为双向交互通道
+  interactive:
+    enabled: false           # 设为 true 启用飞书交互
+    callback_port: 9877      # 事件回调 HTTP 端口（需公网可达）
+    encrypt_key: ""          # 事件订阅加密 key（飞书开放平台配置）
+    verification_token: ""   # 事件订阅验证 token
 
 # 触发通知的事件类型白名单
 notify_on:

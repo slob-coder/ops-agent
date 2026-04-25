@@ -72,7 +72,7 @@ class OpsAgent(
         self.notebook = Notebook(notebook_path)
         self.llm = LLMClient()
         self.trust = TrustEngine(self.notebook, self.llm)
-        self.chat = HumanChannel(self.notebook)
+        self.chat = HumanChannel(self.notebook, backends=self._build_backends())
         # observations 滚动摘要（跨 COLLECT_MORE 轮次积累的历史摘要）
         self._obs_summary = ""
 
@@ -190,6 +190,33 @@ class OpsAgent(
         # 计数器(用于 /metrics)
         self._counter_actions: dict = {}
         self._counter_incidents: dict = {}
+
+    def _build_backends(self) -> list:
+        """构建交互通道后端列表：默认 Console，可选 Feishu"""
+        from src.infra.chat import ConsoleBackend
+        backends = [ConsoleBackend()]
+
+        try:
+            from src.infra.feishu_backend import FeishuBackend, FeishuBackendConfig
+            notifier_yaml = str(Path(self.notebook.path) / "config" / "notifier.yaml")
+            fcfg = FeishuBackendConfig.from_yaml(notifier_yaml)
+            if fcfg.enabled and fcfg.app_id and fcfg.app_secret and fcfg.chat_id:
+                fb = FeishuBackend(
+                    app_id=fcfg.app_id,
+                    app_secret=fcfg.app_secret,
+                    chat_id=fcfg.chat_id,
+                    callback_port=fcfg.callback_port,
+                    encrypt_key=fcfg.encrypt_key,
+                    verification_token=fcfg.verification_token,
+                )
+                backends.append(fb)
+                logger.info("FeishuBackend enabled (interactive)")
+            elif fcfg.enabled:
+                logger.warning("FeishuBackend enabled but missing app_id/app_secret/chat_id, skipped")
+        except Exception as e:
+            logger.warning(f"FeishuBackend init failed: {e}")
+
+        return backends
 
     # ═══════════════════════════════════════════
     #  目标管理
