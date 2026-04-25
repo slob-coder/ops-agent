@@ -11,6 +11,7 @@ FeishuBackend — 飞书交互通道后端
 from __future__ import annotations
 
 import json
+import re
 import time
 import logging
 import queue
@@ -256,7 +257,10 @@ class FeishuBackend(ChannelBackend):
             content_json = event.get("message", {}).get("content", "{}")
             try:
                 content = json.loads(content_json)
-                return content.get("text", "").strip()
+                text = content.get("text", "").strip()
+                # 剥掉飞书 @mention 前缀（如 @_user_1）
+                text = re.sub(r"@_\w+\s*", "", text).strip()
+                return text
             except json.JSONDecodeError:
                 return ""
         # 其他类型暂不支持
