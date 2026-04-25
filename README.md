@@ -65,10 +65,10 @@
 # 一行命令安装（自动下载 + 创建 venv + 安装依赖 + 配置命令）
 curl -fsSL https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
 
-# 或用 wget
-wget -qO- https://raw.githubusercontent.com/slob-coder/ops-agent/main/scripts/install-quick.sh | bash
+# 安装后，如果 ops-agent 命令未识别，执行：
+export PATH="$HOME/.ops-agent/bin:$PATH"
 
-# 安装完成后
+# 然后初始化
 ops-agent init
 ```
 
@@ -76,8 +76,8 @@ ops-agent init
 - 检查 Python ≥ 3.9 和 git
 - 克隆仓库到 `~/.ops-agent`
 - 创建独立 venv（不污染系统 Python）
-- 安装依赖 + `ops-agent` 命令
-- 创建 `~/.local/bin/ops-agent` 符号链接
+- 安装依赖 + 创建 `ops-agent` 命令
+- 自动把 `~/.ops-agent/bin` 加入 shell 配置（新终端生效）
 
 **自定义安装目录：**
 ```bash

@@ -9,6 +9,7 @@ REPO="slob-coder/ops-agent"
 INSTALL_DIR="${OPS_AGENT_HOME:-$HOME/.ops-agent}"
 VENV_DIR="$INSTALL_DIR/.venv"
 BRANCH="${OPS_AGENT_BRANCH:-main}"
+BIN_DIR="$INSTALL_DIR/bin"
 
 # ── 颜色 ──
 RED='\033[0;31m'
@@ -79,54 +80,62 @@ install() {
     "$VENV_DIR/bin/pip" install --quiet -r requirements.txt
     "$VENV_DIR/bin/pip" install --quiet -e .
 
-    # 创建 shell wrapper
-    create_wrapper
+    # 创建 bin 目录 + wrapper
+    create_bin
 
     ok "安装完成！"
 }
 
-# ── 创建 shell wrapper ──
-create_wrapper() {
-    local wrapper="$INSTALL_DIR/ops-agent"
-    cat > "$wrapper" << 'WRAPPER'
-#!/usr/bin/env bash
-# ops-agent wrapper — 自动激活 venv 并运行
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/.venv/bin/activate"
-exec python "$SCRIPT_DIR/main.py" "$@"
-WRAPPER
-    chmod +x "$wrapper"
+# ── 创建可执行 ──
+create_bin() {
+    mkdir -p "$BIN_DIR"
 
-    # 创建符号链接到用户 PATH
-    local link_target=""
-    for dir in "$HOME/.local/bin" "$HOME/bin"; do
-        if [[ -d "$dir" ]] && echo ":$PATH:" | grep -q ":$dir:"; then
-            link_target="$dir/ops-agent"
+    # 主 wrapper
+    cat > "$BIN_DIR/ops-agent" << 'WRAPPER'
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENVSRC="$SCRIPT_DIR/../.venv/bin/activate"
+if [[ -f "$VENVSRC" ]]; then
+    source "$VENVSRC"
+fi
+exec python "$SCRIPT_DIR/../main.py" "$@"
+WRAPPER
+    chmod +x "$BIN_DIR/ops-agent"
+
+    # 尝试加入 PATH — 两种方式都做
+
+    # 方式 1: 符号链接到已有 PATH 目录
+    local linked=false
+    for dir in "$HOME/.local/bin" "$HOME/bin" /usr/local/bin; do
+        if echo ":$PATH:" | grep -q ":$dir:" && [[ -w "$dir" || -w "$(dirname "$dir")" ]]; then
+            mkdir -p "$dir" 2>/dev/null || true
+            if ln -sf "$BIN_DIR/ops-agent" "$dir/ops-agent" 2>/dev/null; then
+                ok "命令链接: $dir/ops-agent"
+                linked=true
+                break
+            fi
+        fi
+    done
+
+    # 方式 2: 写 shell rc 加 PATH
+    local shell_rc=""
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+        if [[ -f "$rc" ]]; then
+            shell_rc="$rc"
             break
         fi
     done
 
-    if [[ -n "$link_target" ]]; then
-        ln -sf "$wrapper" "$link_target"
-        ok "已创建命令链接: $link_target"
-    else
-        # 创建 ~/.local/bin 并加到 PATH
-        mkdir -p "$HOME/.local/bin"
-        ln -sf "$wrapper" "$HOME/.local/bin/ops-agent"
-        ok "已创建命令链接: ~/.local/bin/ops-agent"
+    if [[ -n "$shell_rc" ]] && ! grep -q 'ops-agent/bin' "$shell_rc" 2>/dev/null; then
+        echo '' >> "$shell_rc"
+        echo '# ops-agent' >> "$shell_rc"
+        echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$shell_rc"
+        warn "已将 $BIN_DIR 加入 $shell_rc"
+    fi
 
-        # 提示加 PATH
-        local shell_rc=""
-        if [[ -f "$HOME/.bashrc" ]]; then shell_rc="$HOME/.bashrc"
-        elif [[ -f "$HOME/.zshrc" ]]; then shell_rc="$HOME/.zshrc"; fi
-
-        if [[ -n "$shell_rc" ]] && ! grep -q '.local/bin' "$shell_rc"; then
-            echo '' >> "$shell_rc"
-            echo '# ops-agent' >> "$shell_rc"
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$shell_rc"
-            warn "已将 ~/.local/bin 加入 $shell_rc"
-            warn "请运行: source $shell_rc"
-        fi
+    # 方式 3: 如果还是没有直接可用的 ops-agent，打印 eval 命令
+    if ! command -v ops-agent &>/dev/null; then
+        warn "当前 shell 尚未识别 ops-agent 命令"
     fi
 }
 
@@ -143,14 +152,29 @@ main() {
     echo ""
     echo "━━━ Next Steps ━━━"
     echo ""
-    echo "  1. 初始化配置:"
-    echo "     ops-agent init"
-    echo ""
-    echo "  2. 或从环境变量初始化:"
-    echo "     ops-agent init --from-env"
-    echo ""
-    echo "  3. 启动:"
-    echo "     ops-agent"
+
+    # 判断 ops-agent 是否直接可用
+    if command -v ops-agent &>/dev/null; then
+        echo "  直接运行:"
+        echo "    ops-agent init"
+        echo ""
+    else
+        echo "  当前终端运行（立即可用）:"
+        echo "    export PATH=\"$BIN_DIR:\$PATH\""
+        echo "    ops-agent init"
+        echo ""
+        echo "  新终端自动可用（已写入 shell 配置）"
+        echo ""
+        echo "  或直接用完整路径:"
+        echo "    $BIN_DIR/ops-agent init"
+    fi
+
+    echo "  启动:"
+    if command -v ops-agent &>/dev/null; then
+        echo "    ops-agent"
+    else
+        echo "    $BIN_DIR/ops-agent"
+    fi
     echo ""
     echo "🎉 欢迎使用 OpsAgent！"
 }
