@@ -24,6 +24,8 @@ services:
         NOTEBOOK_EXT: ${NOTEBOOK_EXT:-}
     image: ops-agent:latest
     container_name: ops-agent
+    tty: true
+    stdin_open: true
     restart: unless-stopped
     env_file: .env
     volumes:
