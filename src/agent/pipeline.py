@@ -1,5 +1,11 @@
 """
 OODA 循环 Mixin — observe → assess → diagnose → plan → execute → verify → reflect
+
+Sprint 7-8: Smart Notebook 集成点
+- _observe: 日志行经过感知漏斗 (assess_logs)
+- _diagnose: 知识图谱增强上下文 (gather_knowledge)
+- _reflect: 关闭后触发织网 + 蒸馏 (weave_content / run_maintenance)
+- _loop_once: 巡检间隙执行维护 (run_maintenance)
 """
 
 import os
@@ -45,7 +51,33 @@ class PipelineMixin:
             self.chat.trace("OBSERVE", f"$ {cmd}\n{str(result)[:self.ctx_limits.observe_output_chars]}")
             outputs.append(str(result))
 
-        return "\n\n".join(outputs)
+        raw_observations = "\n\n".join(outputs)
+
+        # Sprint 7-8: Smart 感知漏斗 — 过滤噪音、检测异常
+        if hasattr(self.notebook, "assess_logs") and raw_observations:
+            try:
+                log_lines = raw_observations.split("\n")
+                anomalies = self.notebook.assess_logs(
+                    log_lines, source=getattr(self.current_target, "name", ""),
+                )
+                if anomalies:
+                    anomaly_text = "\n".join(
+                        f"⚡ [{a.level}] {a.signature}: {a.description}"
+                        for a in anomalies
+                        if hasattr(a, "signature")
+                    )
+                    if anomaly_text:
+                        raw_observations += (
+                            f"\n\n## Smart 感知漏斗检测\n{anomaly_text}"
+                        )
+                        self.chat.trace(
+                            "OBSERVE",
+                            f"感知漏斗发现 {len(anomalies)} 个异常信号",
+                        )
+            except Exception as e:
+                logger.debug(f"Smart assess_logs in _observe failed: {e}")
+
+        return raw_observations
 
     def _assess(self, observations: str) -> dict:
         """判断观察结果是否正常"""
@@ -124,20 +156,47 @@ class PipelineMixin:
                 f"但未能映射到本地源码;请检查 targets.yaml 的 source_repos 配置）"
             )
 
-        # 搜索相关 Playbook
+        # Sprint 7-8: Smart 知识图谱增强 — 三层检索 + 结构化上下文
+        smart_knowledge = None
+        if hasattr(self.notebook, "gather_knowledge"):
+            try:
+                smart_knowledge = self.notebook.gather_knowledge(
+                    summary + " " + observations[:500]
+                )
+            except Exception as e:
+                logger.debug(f"Smart gather_knowledge failed: {e}")
+
+        # 搜索相关 Playbook（Smart 提供更丰富的结果，回退到 Basic）
         relevant_files = self.notebook.find_relevant(
             summary + " " + observations[:self.ctx_limits.playbook_search_chars]
         )
         playbook_content = ""
-        for f in relevant_files:
-            if "playbook" in f or "lesson" in f:
-                playbook_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.playbook_content_chars]}\n"
+        if smart_knowledge and hasattr(smart_knowledge, "playbook_contents"):
+            # Smart: 结构化 playbook 内容
+            for name, content in smart_knowledge.playbook_contents.items():
+                playbook_content += f"\n### {name}\n{content[:self.ctx_limits.playbook_content_chars]}\n"
+        if not playbook_content:
+            for f in relevant_files:
+                if "playbook" in f or "lesson" in f:
+                    playbook_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.playbook_content_chars]}\n"
 
         # 搜索历史 Incident
         incidents_content = ""
-        for f in relevant_files:
-            if "incidents" in f:
-                incidents_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.incident_history_chars]}\n"
+        if smart_knowledge and hasattr(smart_knowledge, "similar_incidents"):
+            for inc in smart_knowledge.similar_incidents:
+                if isinstance(inc, str):
+                    content = self.notebook.read(inc)
+                    incidents_content += f"\n### {inc}\n{content[:self.ctx_limits.incident_history_chars]}\n"
+        if not incidents_content:
+            for f in relevant_files:
+                if "incidents" in f:
+                    incidents_content += f"\n### {f}\n{self.notebook.read(f)[:self.ctx_limits.incident_history_chars]}\n"
+
+        # Smart: 附加 reflections 上下文
+        reflections_content = ""
+        if smart_knowledge and hasattr(smart_knowledge, "reflections"):
+            for ref in (smart_knowledge.reflections or []):
+                reflections_content += f"- {ref}\n"
 
         # trace 记录源码上下文
         self.chat.trace("DIAGNOSE", f"源码上下文:\n{source_text[:self.ctx_limits.source_context_trace_chars]}")
@@ -150,6 +209,10 @@ class PipelineMixin:
             project_map = self._load_agents_md_section(repo_name, keywords)
         elif self.current_target and self.current_target.source_repos:
             project_map = self._load_agents_md()
+
+        # Sprint 7-8: 将 reflections 注入到相似 incident 上下文中
+        if reflections_content:
+            incidents_content += f"\n### 相关经验洞察\n{reflections_content}\n"
 
         max_obs = getattr(self.limits.config, "max_observations_chars", 8000)
         prompt = self._fill_prompt(
@@ -459,6 +522,30 @@ class PipelineMixin:
 
         # 更新 README 成长数据
         self.notebook.update_readme_growth()
+
+        # Sprint 7-8: Smart 反思增强 — 知识织网 + 蒸馏 + 洞察持久化
+        if hasattr(self.notebook, "weave_content"):
+            try:
+                self.notebook.weave_content(
+                    f"incidents/active/{self.current_incident}",
+                    doc_type="incident",
+                    summary=response[:500],
+                )
+                self.chat.trace("REFLECT", "知识织网完成")
+            except Exception as e:
+                logger.debug(f"Smart weave_content in _reflect failed: {e}")
+
+        if hasattr(self.notebook, "run_maintenance"):
+            try:
+                result = self.notebook.run_maintenance()
+                distilled = result.get("distilled_playbooks", 0)
+                if distilled:
+                    self.chat.trace(
+                        "REFLECT",
+                        f"Playbook 蒸馏: 生成 {distilled} 个新 Playbook",
+                    )
+            except Exception as e:
+                logger.debug(f"Smart run_maintenance in _reflect failed: {e}")
 
     def _close_incident(self, summary: str):
         """关闭并归档 Incident"""

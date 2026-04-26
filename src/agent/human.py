@@ -88,6 +88,28 @@ class HumanInteractionMixin:
                 self.chat.say("\n".join(lines), "info")
             return
 
+        # Sprint 7-8: 误报标记 — 记录到 Smart FP tracker
+        if lower.startswith("fp ") or lower.startswith("误报 ") or lower.startswith("false-positive "):
+            pattern = msg.split(None, 1)[1].strip() if len(msg.split(None, 1)) > 1 else ""
+            if not pattern:
+                self.chat.say(
+                    "用法: fp <异常模式/关键词>\n"
+                    "例: fp OOM killer invoked\n"
+                    "效果: 标记该模式为误报,达到阈值后自动抑制",
+                    "info",
+                )
+                return
+            if hasattr(self.notebook, "record_fp_rejection"):
+                self.notebook.record_fp_rejection(
+                    pattern,
+                    incident_path=self.current_incident or "",
+                    context=f"human marked at {datetime.now().isoformat()}",
+                )
+                self.chat.say(f"已记录误报: {pattern}", "info")
+            else:
+                self.chat.say("当前未启用 Smart Notebook,误报记录不可用。", "info")
+            return
+
         # ═══ 自修复命令 ═══
         if lower.startswith("self-fix") or lower.startswith("selffix"):
             # 提取描述部分
@@ -681,6 +703,7 @@ class HumanInteractionMixin:
             "   unfreeze      解除紧急冻结\n"
             "   silence       查看静默中的异常指纹\n"
             "   clear silence 清空静默表,下一轮重新判断\n"
+            "   fp <模式>     标记异常模式为误报(Smart Notebook)\n"
             "   new / clear chat / 清除对话   清除自由对话上下文\n"
             "   collab (协作)  进入协作排查模式(人+Agent 一起定位问题)\n"
             "   self-fix <描述> 触发一次自修复会话(修改 ops-agent 自己)\n"
