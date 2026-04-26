@@ -34,7 +34,7 @@ services:
       - ./notebook:/data/notebook
       - ~/.ssh:/root/.ssh:ro
       - /var/run/docker.sock:/var/run/docker.sock  # 访问宿主机 Docker
-      - /opt/vol/source-projs:/opt/vol/source-projs  # 源码仓库（patch-fix 流程需要）
+      - ${SOURCE_REPOS_DIR:-/opt/vol/source-projs}:${SOURCE_REPOS_DIR:-/opt/vol/source-projs}  # 源码仓库（patch-fix 流程需要，路径与 targets.yaml 中 source_repos.path 对齐）
     ports:
       - "9876:9876"    # Agent HTTP 健康检查 + metrics
       - "9877:9877"    # 飞书事件回调（启用交互模式时需要）
