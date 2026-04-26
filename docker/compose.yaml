@@ -22,6 +22,8 @@ services:
         # Notebook 扩展包，留空则使用 Basic Notebook
         # 示例: git+https://github.com/slob-coder/smart-notebook.git
         NOTEBOOK_EXT: ${NOTEBOOK_EXT:-}
+        # 私有仓库 GitHub PAT（可选）
+        GIT_TOKEN: ${GIT_TOKEN:-}
     image: ops-agent:latest
     container_name: ops-agent
     tty: true
