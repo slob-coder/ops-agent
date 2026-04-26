@@ -1,0 +1,28 @@
+# Notebook Configuration
+# implementation 字段已废弃 — 自动检测 smart-notebook 是否安装
+# 安装了 smart-notebook → Smart 模式，未安装 → Basic 模式
+
+# Smart mode config (only used when smart-notebook is installed)
+smart:
+  notebook_path: notebook
+
+  knowledge:
+    link_cache_file: .links.json
+    moc_dir: moc
+    auto_link_entities: true
+
+  growth:
+    candidate_threshold: 2
+    stable_threshold: 3
+    permanent_threshold: 5
+    decay_days: 30
+    outcome_check_delay_days: 3
+    distill_min_cluster: 3
+    fp_suppress_threshold: 2
+
+  perception:
+    rate_window_seconds: 60
+    z_threshold: 3.0
+    correlation_window_seconds: 120
+    max_llm_assessments_per_hour: 20
+    baseline_days: 7
