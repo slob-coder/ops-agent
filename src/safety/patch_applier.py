@@ -113,7 +113,7 @@ class PatchApplier:
                 return VerificationResult(
                     success=False, stage="failed-at-apply",
                     apply_output=self._truncate(apply_out),
-                    error_message=f"git apply failed (rc={apply_rc})",
+                    error_message=f"git apply failed (rc={apply_rc}): {self._truncate(apply_out)}",
                 )
 
             # ── 3. commit ──
