@@ -10,7 +10,8 @@ from pathlib import Path
 from datetime import datetime
 
 from src.infra.llm import LLMClient, LLMInterrupted, LLMDegraded
-from src.infra.notebook import Notebook
+from src.infra.notebook import NotebookProtocol
+from src.infra.notebook_adapter import create_notebook
 from src.infra.tools import ToolBox, TargetConfig, CommandInterrupted
 from src.safety.trust import TrustEngine, ActionPlan, ALLOW, NOTIFY_THEN_DO, ASK, DENY
 from src.infra.chat import HumanChannel
@@ -69,8 +70,9 @@ class OpsAgent(
             readonly: 只读模式
             fallback_target: 当 targets 为空时的兜底目标(用于命令行 --target 启动)
         """
-        self.notebook = Notebook(notebook_path)
         self.llm = LLMClient()
+        # Notebook 工厂：smart-notebook 已安装 → Smart，否则 → Basic
+        self.notebook = create_notebook(notebook_path=notebook_path, llm=self.llm)
         self.trust = TrustEngine(self.notebook, self.llm)
         self.chat = HumanChannel(self.notebook, backends=self._build_backends())
         # observations 滚动摘要（跨 COLLECT_MORE 轮次积累的历史摘要）
@@ -462,6 +464,8 @@ class OpsAgent(
             return
 
         if not observations:
+            # Sprint 7-8: 空闲时执行 Smart 维护（Outcome 到期检查、衰减、蒸馏）
+            self._smart_maintenance()
             self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
             self._already_slept_this_loop = True
             return
@@ -475,6 +479,8 @@ class OpsAgent(
 
         if assessment.get("status") == "NORMAL":
             self.chat.log("一切正常")
+            # Sprint 7-8: 正常时也执行维护
+            self._smart_maintenance()
             self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
             self._already_slept_this_loop = True
             return
@@ -861,6 +867,40 @@ class OpsAgent(
                     f"问题尚未修复，将在下轮巡检重新处理。\n",
                 )
                 self.limits.record_incident_end()
+
+    # ═══════════════════════════════════════════
+    #  Sprint 7-8: Smart Notebook 维护
+    # ═══════════════════════════════════════════
+
+    def _smart_maintenance(self) -> None:
+        """巡检空闲时执行 Smart Notebook 维护任务
+
+        包括：Outcome 到期检查、洞察衰减、Playbook 蒸馏。
+        仅 Smart 模式有效，Basic 模式静默跳过。
+        频率限制：最多每 5 分钟执行一次。
+        """
+        if not hasattr(self.notebook, "run_maintenance"):
+            return
+
+        now = time.time()
+        last = getattr(self, "_last_smart_maintenance", 0)
+        if now - last < 300:  # 5 分钟冷却
+            return
+        self._last_smart_maintenance = now
+
+        try:
+            result = self.notebook.run_maintenance()
+            outcomes = result.get("outcomes_checked", 0)
+            decayed = result.get("decayed", 0)
+            distilled = result.get("distilled_playbooks", 0)
+            if outcomes or decayed or distilled:
+                self.chat.trace(
+                    "MAINTENANCE",
+                    f"Smart 维护: outcomes={outcomes} decayed={decayed} "
+                    f"distilled={distilled}",
+                )
+        except Exception as e:
+            logger.debug(f"Smart maintenance failed: {e}")
 
     # ═══════════════════════════════════════════
     #  Sprint 5: 状态持久化 / 崩溃恢复

@@ -3,7 +3,8 @@ from src.infra.tools import CommandInterrupted, CommandResult, TargetConfig, Too
 from src.infra.targets import SourceRepo, Target
 from src.infra.chat import Color, HumanChannel
 from src.infra.llm import LLMInterrupted, LLMDegraded, RetryingLLM, LLMClient
-from src.infra.notebook import Notebook
+from src.infra.notebook import Notebook, NotebookProtocol
+from src.infra.notebook_adapter import create_notebook
 from src.infra.deploy_watcher import DeployStatus, DeployWatcher
 from src.infra.production_watcher import WatchOutcome, WatchResult, ProductionWatcher
 from src.infra.notifier import NotifierConfig, Notifier, NoOpNotifier, SlackNotifier, DingTalkNotifier
