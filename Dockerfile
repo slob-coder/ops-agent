@@ -21,6 +21,16 @@ RUN pip install --no-cache-dir -e . && \
     git config --global user.email "agent@ops" && \
     echo "StrictHostKeyChecking=no" >> /root/.ssh/config
 
+# 可选：安装 Notebook 扩展包
+# 构建时通过 --build-arg 传入，不传则跳过（使用 Basic Notebook）
+ARG NOTEBOOK_EXT=""
+RUN if [ -n "$NOTEBOOK_EXT" ]; then \
+        echo "Installing notebook extension: $NOTEBOOK_EXT" && \
+        pip install --no-cache-dir "$NOTEBOOK_EXT"; \
+    else \
+        echo "No notebook extension specified, using Basic Notebook"; \
+    fi
+
 VOLUME /data/notebook
 
 # 入口脚本区分 demo 和正常模式

@@ -8,11 +8,21 @@
 #   3. docker compose logs -f          # 查看日志
 #   4. docker compose exec ops-agent bash  # 进入容器
 #
+# 启用 Notebook 扩展（如 smart-notebook）:
+#   docker compose build --build-arg NOTEBOOK_EXT=git+https://github.com/slob-coder/smart-notebook.git
+#   docker compose up -d
+#
 # ═══════════════════════════════════════════════════════════════
 
 services:
   ops-agent:
-    build: ..
+    build:
+      context: ..
+      args:
+        # Notebook 扩展包，留空则使用 Basic Notebook
+        # 示例: git+https://github.com/slob-coder/smart-notebook.git
+        NOTEBOOK_EXT: ${NOTEBOOK_EXT:-}
+    image: ops-agent:latest
     container_name: ops-agent
     restart: unless-stopped
     env_file: .env
