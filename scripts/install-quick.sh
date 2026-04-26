@@ -8,8 +8,11 @@ set -euo pipefail
 REPO="slob-coder/ops-agent"
 INSTALL_DIR="${OPS_AGENT_HOME:-$HOME/.ops-agent}"
 VENV_DIR="$INSTALL_DIR/.venv"
-BRANCH="${OPS_AGENT_BRANCH:-main}"
 BIN_DIR="$INSTALL_DIR/bin"
+
+# 默认安装最新 release，可通过 OPS_AGENT_VERSION 指定版本（如 v2.0.0）
+# 设为 "main" 则安装 main 分支最新代码
+VERSION="${OPS_AGENT_VERSION:-latest}"
 
 # ── 颜色 ──
 RED='\033[0;31m'
@@ -56,15 +59,36 @@ check_deps() {
 install() {
     info "安装目录: $INSTALL_DIR"
 
+    # 解析目标版本/分支
+    local ref
+    if [[ "$VERSION" == "latest" ]]; then
+        ref=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/')
+        if [[ -z "$ref" ]]; then
+            # 没有 release，回退到 main
+            warn "未找到 release，回退到 main 分支"
+            ref="main"
+        else
+            info "最新 release: $ref"
+        fi
+    else
+        ref="$VERSION"
+        info "指定版本: $ref"
+    fi
+
     # 克隆（或更新）
     if [[ -d "$INSTALL_DIR/.git" ]]; then
-        info "已存在，拉取最新版本..."
+        info "已存在，切换到 $ref..."
         cd "$INSTALL_DIR"
-        git fetch origin "$BRANCH" --quiet
-        git reset --hard "origin/$BRANCH" --quiet
+        git fetch origin --tags --quiet
+        git checkout "$ref" --quiet
     else
         info "克隆仓库..."
-        git clone --depth 1 --branch "$BRANCH" "https://github.com/$REPO.git" "$INSTALL_DIR" --quiet
+        git clone --depth 1 --branch "$ref" "https://github.com/$REPO.git" "$INSTALL_DIR" --quiet 2>/dev/null || {
+            # branch 可能是 tag，部分 git 版本 --branch 不支持 tag
+            git clone --depth 1 "https://github.com/$REPO.git" "$INSTALL_DIR" --quiet
+            cd "$INSTALL_DIR"
+            git checkout "$ref" --quiet
+        }
         cd "$INSTALL_DIR"
     fi
 
