@@ -37,6 +37,29 @@ docker compose build
 docker compose up -d
 ```
 
+### 私有仓库
+
+如果扩展包在私有 GitHub 仓库中，通过 `GIT_TOKEN` 传入 GitHub PAT：
+
+```bash
+# 创建 PAT: GitHub → Settings → Developer settings → Personal access tokens
+# 需要 repo 权限
+
+docker compose build \
+  --build-arg NOTEBOOK_EXT=git+https://github.com/slob-coder/smart-notebook.git \
+  --build-arg GIT_TOKEN=ghp_xxxxxxxxxxxx
+```
+
+或在 `.env` 中设置：
+
+```bash
+# .env
+NOTEBOOK_EXT=git+https://github.com/slob-coder/smart-notebook.git
+GIT_TOKEN=ghp_xxxxxxxxxxxx
+```
+
+> ⚠️ `GIT_TOKEN` 会写入镜像层，不要将构建好的镜像推送到公共 registry。
+
 ### 回退到 Basic Notebook
 
 ```bash
