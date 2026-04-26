@@ -470,6 +470,14 @@ def run_init(notebook_path: str = "./notebook", from_env: bool = False):
                 print("  ⚠️  SSH test failed. You can fix config later.")
 
     # ── 3. 源码仓库（可选）──
+    # 源码总目录：所有 source_repos.path 必须是其子目录
+    # Docker 部署时此目录通过 volume 挂载进容器
+    source_repos_dir = _get_env(
+        "OPS_SOURCE_REPOS_DIR", "Source repos base directory",
+        default="/opt/vol/source-projs",
+    )
+    source_repos_dir = os.path.abspath(source_repos_dir)
+
     source_repo = None
     if not from_env:
         add_repo = _ask_yesno("Configure a source repo for this target?", default=False)
@@ -480,7 +488,35 @@ def run_init(notebook_path: str = "./notebook", from_env: bool = False):
     if add_repo:
         repo = {}
         repo["name"] = _get_env("OPS_REPO_NAME", "Repo name", default="app")
-        repo["path"] = _get_env("OPS_REPO_PATH", "Local clone path", required=True)
+
+        # repo path 必须在 source_repos_dir 下
+        if not from_env:
+            print(f"  ℹ️  Repo path must be under {source_repos_dir}/")
+            repo_subdir = _get_env(
+                "OPS_REPO_SUBDIR", "Subdirectory under source repos dir",
+                default=repo["name"],
+            )
+            repo["path"] = os.path.join(source_repos_dir, repo_subdir)
+            print(f"  → Full path: {repo['path']}")
+        else:
+            repo["path"] = _get_env("OPS_REPO_PATH", "Local clone path", required=True)
+
+        # 校验路径存在
+        if os.path.isdir(repo["path"]):
+            print(f"  ✅ Path exists: {repo['path']}")
+        else:
+            print(f"  ⚠️  Path does not exist: {repo['path']}")
+            print(f"     Make sure to clone the repo before running ops-agent.")
+            if not from_env:
+                if not _ask_yesno("Continue anyway?", default=False):
+                    repo["path"] = input("  Enter correct repo path: ").strip()
+
+        # 校验路径在 source_repos_dir 下
+        if not os.path.abspath(repo["path"]).startswith(source_repos_dir + os.sep) and \
+           os.path.abspath(repo["path"]) != source_repos_dir:
+            print(f"  ⚠️  Path {repo['path']} is not under {source_repos_dir}")
+            print(f"     Docker deployments require all repos under SOURCE_REPOS_DIR.")
+            print(f"     Please update .env SOURCE_REPOS_DIR or move the repo.")
         repo["repo_url"] = _get_env("OPS_REPO_URL", "Git remote URL (optional)", default="")
         repo["branch"] = _get_env("OPS_REPO_BRANCH", "Branch", default="main")
         repo["language"] = _get_env(
