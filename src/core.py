@@ -854,6 +854,19 @@ class OpsAgent(
             elif state == "REFLECT":
                 self._reflect()
                 break
+        else:
+            # 循环耗尽，未能在最大轮次内解决问题
+            self.chat.say(
+                f"已达到最大处理轮次 ({max_total_rounds})，"
+                f"仍未能解决问题，暂停调查。",
+                "warning",
+            )
+            self.notebook.append_to_incident(
+                self.current_incident,
+                f"\n## 状态：轮次耗尽\n"
+                f"已达到 max_total_rounds={max_total_rounds}，问题未解决，将在下轮巡检重新处理。\n",
+            )
+            self.limits.record_incident_end()
 
         # ── 关闭或挂起 Incident ──
         if self.current_incident:

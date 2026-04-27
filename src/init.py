@@ -202,7 +202,7 @@ llm_tokens_per_hour: 200000
 llm_tokens_per_day: 1000000
 max_collab_auto_rounds: 30
 max_observations_chars: 8000
-max_total_rounds: 15
+max_total_rounds: 40
 max_diagnose_rounds: 25
 max_fix_attempts: 3
 silence_window_seconds: 1800

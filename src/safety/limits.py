@@ -54,7 +54,7 @@ class LimitsConfig:
     max_observations_chars: int = 8000
 
     # ── 流程控制上限 ──
-    max_total_rounds: int = 8
+    max_total_rounds: int = 40
     max_diagnose_rounds: int = 4
     max_fix_attempts: int = 2
     silence_window_seconds: int = 1800
