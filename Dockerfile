@@ -6,7 +6,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     DOCKER_VER="27.5.1" && \
     curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VER}.tgz" \
         | tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
-    docker --version
+    docker --version && \
+    COMPOSE_VER="v2.36.1" && \
+    mkdir -p /usr/local/lib/docker/cli-plugins && \
+    curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-x86_64" \
+        -o /usr/local/lib/docker/cli-plugins/docker-compose && \
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose && \
+    docker compose version
 
 WORKDIR /app
 
@@ -21,11 +27,6 @@ RUN pip install --no-cache-dir -e . && \
     git config --global user.email "agent@ops" && \
     echo "StrictHostKeyChecking=no" >> /root/.ssh/config
 
-# 可选：安装 Notebook 扩展包
-# 构建时通过 --build-arg 传入，不传则跳过（使用 Basic Notebook）
-# 私有仓库：通过 GIT_TOKEN 传入 GitHub PAT 或 SSH key
-#   docker compose build --build-arg NOTEBOOK_EXT=git+https://github.com/org/repo.git --build-arg GIT_TOKEN=ghp_xxx
-#   或使用 SSH: --build-arg NOTEBOOK_EXT=git+ssh://git@github.com/org/repo.git --mount=type=ssh
 ARG NOTEBOOK_EXT=""
 ARG GIT_TOKEN=""
 RUN if [ -n "$NOTEBOOK_EXT" ]; then \
@@ -42,7 +43,6 @@ RUN if [ -n "$NOTEBOOK_EXT" ]; then \
 
 VOLUME /data/notebook
 
-# 入口脚本区分 demo 和正常模式
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
