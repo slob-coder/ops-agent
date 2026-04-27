@@ -216,9 +216,8 @@ class FeishuBackend(ChannelBackend):
             self._send_text(text)
 
     def send_cmd_log(self, cmd: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
-        text = f"🔧 [{ts}] │ {cmd}"
-        self._send_text(text)
+        # 命令日志不推飞书（太碎），静默
+        pass
 
     def request_approval(self, action_description: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
