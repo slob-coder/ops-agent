@@ -247,13 +247,12 @@ class HumanChannel:
         else:
             self.backends = [ConsoleBackend(mode=mode)]
 
+        self._console_backend: Optional[ConsoleBackend] = None
         for b in self.backends:
             b.start(self.inbox, self._approval_queue, self.interrupted)
             # ConsoleBackend 需要知道 approval 状态
             if isinstance(b, ConsoleBackend):
                 self._console_backend = b
-            else:
-                self._console_backend = None
 
     # ═══════════════════════════════════════════
     #  输出（广播到所有后端）
