@@ -427,8 +427,7 @@ class OpsAgent(
                 break
             self._handle_human_message(msg)
             handled = True
-        if handled:
-            self.chat.clear_interrupt()
+        self.chat.clear_interrupt()
         return handled
 
     def _loop_once(self):
