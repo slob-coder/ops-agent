@@ -56,7 +56,7 @@ max_observations_chars: 8000
 
 # incident_loop 总轮次上限(含 diagnose + fix 所有阶段)
 # 超过后强制退出当前 Incident
-max_total_rounds: 15
+max_total_rounds: 40
 
 # 诊断阶段最大轮次(COLLECT_MORE 循环的上限)
 # 超过后放弃继续收集信息,直接尝试修复
