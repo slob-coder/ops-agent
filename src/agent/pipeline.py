@@ -333,6 +333,11 @@ class PipelineMixin:
         elif self.current_target and self.current_target.source_repos:
             project_map = self._load_agents_md()
 
+        # 复用 diagnose 阶段的源码定位结果
+        source_text = "（无）"
+        if hasattr(self, "_last_locate_result") and self._last_locate_result and self._last_locate_result.locations:
+            source_text = self._last_locate_result.render()
+
         prompt = self._fill_prompt(
             "plan",
             diagnosis=str(diagnosis),
@@ -340,6 +345,7 @@ class PipelineMixin:
             permissions=permissions,
             build_deploy_context=build_deploy_context,
             project_map=project_map or "（无项目地图）",
+            source_locations=source_text,
         )
 
         response = self._ask_llm(prompt, phase="PLAN")
