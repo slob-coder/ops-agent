@@ -47,6 +47,7 @@ class PipelineMixin:
         outputs = []
         max_cmds = self.limits.config.max_observe_commands
         for cmd in commands[:max_cmds]:
+            self.chat.cmd_log(cmd)
             result = self._run_cmd(cmd, timeout=15)
             self.chat.trace("OBSERVE", f"$ {cmd}\n{str(result)[:self.ctx_limits.observe_output_chars]}")
             outputs.append(str(result))
@@ -404,6 +405,7 @@ class PipelineMixin:
             if not cmd:
                 continue
 
+            self.chat.cmd_log(f"步骤{i}: {cmd}")
             self.chat.trace("EXECUTE", f"STEP {i}: {cmd} ({purpose})")
 
             # 超时重试机制：首次用默认 timeout，超时后逐步加倍重试
@@ -453,6 +455,7 @@ class PipelineMixin:
             if not cmd:
                 continue
 
+            self.chat.cmd_log(f"回滚{i}: {cmd}")
             self.chat.trace("ROLLBACK", f"STEP {i}: {cmd} ({purpose})")
             result = self._run_cmd(cmd, timeout=30)
             results.append(f"ROLLBACK STEP {i}: {cmd}\n{str(result)}")
@@ -610,6 +613,7 @@ class PipelineMixin:
             cmd = gap.get("command", "")
             if not cmd:
                 continue
+            self.chat.cmd_log(cmd)
             result = self._run_cmd(cmd, timeout=15)
             self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:self.ctx_limits.gap_output_trace_chars]}")
             outputs.append(f"$ {cmd}\n{str(result)}")
@@ -621,6 +625,7 @@ class PipelineMixin:
                 cmds = self._generate_gap_commands(descriptions)
                 max_gen = self.limits.config.max_generated_gap_commands
                 for cmd in cmds[:max_gen]:
+                    self.chat.cmd_log(cmd)
                     result = self._run_cmd(cmd, timeout=15)
                     self.chat.trace("INVESTIGATE", f"$ {cmd}\n{str(result)[:self.ctx_limits.gap_output_trace_chars]}")
                     outputs.append(f"$ {cmd}\n{str(result)}")
