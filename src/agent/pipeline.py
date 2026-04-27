@@ -561,6 +561,17 @@ class PipelineMixin:
             except Exception as e:
                 logger.debug(f"Smart weave_content in _reflect failed: {e}")
 
+        # 洞察持久化：从复盘中提取洞察推入 DurabilityGate
+        if hasattr(self.notebook, "process_insight"):
+            try:
+                insight = self._build_reflect_insight(response)
+                if insight:
+                    level = self.notebook.process_insight(insight)
+                    if level:
+                        self.chat.trace("REFLECT", f"洞察持久化: {insight.id} → {level.value}")
+            except Exception as e:
+                logger.debug(f"Smart process_insight in _reflect failed: {e}")
+
         if hasattr(self.notebook, "run_maintenance"):
             try:
                 result = self.notebook.run_maintenance()
@@ -573,6 +584,37 @@ class PipelineMixin:
             except Exception as e:
                 logger.debug(f"Smart run_maintenance in _reflect failed: {e}")
 
+    def _build_reflect_insight(self, reflect_text: str):
+        """从复盘文本构造 Insight 对象。仅 Smart 模式调用。
+
+        smart_notebook 未安装时返回 None，不影响基础流程。
+        """
+        try:
+            from smart_notebook.core.types import Insight
+        except ImportError:
+            return None
+
+        import hashlib
+        slug = re.sub(r'[^a-z0-9\u4e00-\u9fff]', '',
+                      reflect_text[:40].lower().replace(' ', '-'))
+        h = hashlib.md5(reflect_text.encode()).hexdigest()[:6]
+        text_lower = reflect_text.lower()
+        if any(k in text_lower for k in ("误报", "false positive", "fp")):
+            cat = "false-positives"
+        elif any(k in text_lower for k in ("patch", "补丁", "代码修改")):
+            cat = "patch-quality"
+        elif any(k in text_lower for k in ("命令", "tool", "ssh", "docker")):
+            cat = "tool-usage"
+        else:
+            cat = "diagnosis-patterns"
+
+        return Insight(
+            id=f"{slug}-{h}" if slug else h,
+            category=cat,
+            content=reflect_text[:500],
+            evidence_links=[f"[[incidents/active/{self.current_incident}]]"],
+        )
+
     def _close_incident(self, summary: str):
         """关闭并归档 Incident"""
         if self.current_incident:
@@ -581,6 +623,10 @@ class PipelineMixin:
             self.current_incident = None
             self.chat._trace_file = "patrol"  # trace 恢复到默认
             self.limits.record_incident_end()
+            # 成长统计打点
+            if hasattr(self, "_weekly_stats"):
+                self._weekly_stats["fixed"] += 1
+                self._weekly_stats["total"] += 1
 
     def _summarize_observations(
         self, observations: str, diagnosis: dict, prev_summary: str = "",

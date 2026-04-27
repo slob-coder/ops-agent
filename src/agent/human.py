@@ -107,10 +107,23 @@ class HumanInteractionMixin:
                 )
                 if result:
                     self.chat.say(f"已记录误报: {pattern}", "info")
+                    # 成长统计打点
+                    if hasattr(self, "_weekly_stats"):
+                        self._weekly_stats["fp"] += 1
                 else:
                     self.chat.say(f"⚠️ 误报记录失败: {pattern}，请检查日志", "warning")
             else:
                 self.chat.say("当前未启用 Smart Notebook,误报记录不可用。", "info")
+            return
+
+        # ═══ Smart 成长命令 ═══
+
+        if lower in ("scorecard", "growth", "成长"):
+            self._show_scorecard()
+            return
+
+        if lower in ("trust", "信任"):
+            self._show_trust_level()
             return
 
         # ═══ 自修复命令 ═══
@@ -709,6 +722,8 @@ class HumanInteractionMixin:
             "   silence       查看静默中的异常指纹\n"
             "   clear silence 清空静默表,下一轮重新判断\n"
             "   fp <模式>     标记异常模式为误报(Smart Notebook)\n"
+            "   scorecard (growth/成长)  查看成长记分卡\n"
+            "   trust (信任)             查看当前信任层级\n"
             "   new / clear chat / 清除对话   清除自由对话上下文\n"
             "   collab (协作)  进入协作排查模式(人+Agent 一起定位问题)\n"
             "   self-fix <描述> 触发一次自修复会话(修改 ops-agent 自己)\n"
@@ -760,6 +775,27 @@ class HumanInteractionMixin:
         if self.emergency.frozen:
             frozen_line = "\n   🚨 紧急冻结已激活"
 
+        # Smart Notebook 附加状态
+        smart_line = ""
+        if hasattr(self.notebook, "get_smart_stats"):
+            try:
+                ss = self.notebook.get_smart_stats()
+                smart_line = (
+                    f"\n   📊 Smart Notebook:\n"
+                    f"      知识链接: {ss.get('linker', {}).get('total_links', 0)}\n"
+                    f"      FP 抑制: {ss.get('fp_suppressed', 0)} 模式\n"
+                    f"      持久洞察: {ss.get('durability_insights', 0)} 条"
+                )
+            except Exception:
+                pass
+        if hasattr(self.notebook, "evaluate_trust"):
+            try:
+                tr = self.notebook.evaluate_trust()
+                if tr:
+                    smart_line += f"\n      信任层级: {tr.get('level', '?')}"
+            except Exception:
+                pass
+
         self.chat.say(
             f"当前状态:\n"
             f"   模式: {self.mode}\n"
@@ -772,9 +808,37 @@ class HumanInteractionMixin:
             f"   Playbook: {len(playbooks)} 个\n"
             f"   动作配额(本小时): {s['actions_last_hour']}/{s['max_actions_per_hour']}\n"
             f"   当前问题: {self.current_issue or '无'}"
-            f"{cooldown_line}{frozen_line}",
+            f"{cooldown_line}{frozen_line}{smart_line}",
             "info",
         )
+
+    def _show_scorecard(self):
+        """展示最近的成长记分卡"""
+        content = self.notebook.read("growth/scorecard.md")
+        if content:
+            self.chat.say(content[:2000], "info")
+        else:
+            self.chat.say(
+                "暂无 Scorecard 数据。Smart Notebook 模式下每周末自动生成。",
+                "info",
+            )
+
+    def _show_trust_level(self):
+        """展示当前信任层级"""
+        if hasattr(self.notebook, "evaluate_trust"):
+            try:
+                result = self.notebook.evaluate_trust()
+                if result:
+                    limits = result.get("limits", {})
+                    lines = [f"信任层级: {result['level']}"]
+                    if isinstance(limits, dict):
+                        for k, v in limits.items():
+                            lines.append(f"   {k}: {v}")
+                    self.chat.say("\n".join(lines), "info")
+                    return
+            except Exception:
+                pass
+        self.chat.say("信任演化需要 Smart Notebook 扩展。", "info")
 
     def _run_self_repair(self, description: str):
         """触发一次自修复会话。

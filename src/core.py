@@ -113,6 +113,9 @@ class OpsAgent(
         # ── 上下文窗口限制 ──
         self.ctx_limits = get_context_limits(notebook_path)
 
+        # ── Smart 成长统计（信任演化用）──
+        self._weekly_stats: dict = {"fixed": 0, "total": 0, "fp": 0, "reverted": 0}
+
         # ── 异常指纹静默（修复：避免异常持续存在时反复开 incident）──
         # 结构: fingerprint -> last_fired_timestamp
         self._issue_fingerprints: dict = {}
@@ -867,6 +870,9 @@ class OpsAgent(
                 f"已达到 max_total_rounds={max_total_rounds}，问题未解决，将在下轮巡检重新处理。\n",
             )
             self.limits.record_incident_end()
+            # 成长统计：未解决也计入 total
+            if hasattr(self, "_weekly_stats"):
+                self._weekly_stats["total"] += 1
 
         # ── 关闭或挂起 Incident ──
         if self.current_incident:
@@ -903,16 +909,62 @@ class OpsAgent(
         try:
             result = self.notebook.run_maintenance()
             outcomes = result.get("outcomes_checked", 0)
-            decayed = result.get("decayed", 0)
-            distilled = result.get("distilled_playbooks", 0)
+            decayed = result.get("insights_decayed", 0)
+            distilled = result.get("playbooks_distilled", 0)
+            learnings = result.get("outcome_learnings", [])
             if outcomes or decayed or distilled:
                 self.chat.trace(
                     "MAINTENANCE",
                     f"Smart 维护: outcomes={outcomes} decayed={decayed} "
                     f"distilled={distilled}",
                 )
+            for learn in learnings:
+                self.chat.trace(
+                    "MAINTENANCE",
+                    f"Outcome 学习: {learn['incident']} → {learn['outcome']}",
+                )
         except Exception as e:
             logger.debug(f"Smart maintenance failed: {e}")
+
+        # 信任演化 — 每 24h 一次
+        if hasattr(self.notebook, "evaluate_trust"):
+            last_te = getattr(self, "_last_trust_eval", 0)
+            if now - last_te > 86400:
+                try:
+                    total = self._weekly_stats["total"] or 1
+                    trust_result = self.notebook.evaluate_trust({
+                        "fix_rate": self._weekly_stats["fixed"] / total,
+                        "fp_rate": self._weekly_stats["fp"] / total,
+                        "reverted_count": self._weekly_stats["reverted"],
+                    })
+                    if trust_result:
+                        self.chat.trace(
+                            "MAINTENANCE",
+                            f"信任评估: {trust_result.get('level', '?')}",
+                        )
+                    self._last_trust_eval = now
+                except Exception as e:
+                    logger.debug(f"Trust evaluation failed: {e}")
+
+        # 成长记分卡 — 每周末生成一次
+        if hasattr(self.notebook, "generate_scorecard"):
+            from datetime import datetime as _dt
+            _now = _dt.now()
+            current_week = f"{_now.year}-W{_now.isocalendar()[1]:02d}"
+            last_sc = getattr(self, "_last_scorecard_week", "")
+            if current_week != last_sc and _now.weekday() >= 5:
+                try:
+                    data = self.notebook.generate_scorecard(week=current_week)
+                    self._last_scorecard_week = current_week
+                    if data:
+                        self.chat.say(
+                            f"📊 周度自评 {current_week} — "
+                            f"层级: {data.growth_level.value}  "
+                            f"修复率: {data.fix_rate*100:.0f}%",
+                            "info",
+                        )
+                except Exception as e:
+                    logger.debug(f"Scorecard generation failed: {e}")
 
     # ═══════════════════════════════════════════
     #  Sprint 5: 状态持久化 / 崩溃恢复
