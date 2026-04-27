@@ -88,7 +88,7 @@ class Notebook:
         """读一个文件，不存在返回空字符串"""
         fp = self.path / relative_path
         if fp.exists():
-            return fp.read_text(encoding="utf-8")
+            return fp.read_text(encoding="utf-8", errors="replace")
         return ""
 
     def exists(self, relative_path: str) -> bool:
@@ -98,7 +98,7 @@ class Notebook:
         """列出目录下的文件名"""
         dp = self.path / relative_path
         if dp.exists() and dp.is_dir():
-            return sorted([f.name for f in dp.iterdir() if f.is_file()])
+            return sorted([f.name for f in dp.iterdir() if f.is_file() and not f.name.endswith((".swp", ".swo", "~"))])
         return []
 
     def search(self, keyword: str) -> list[str]:
