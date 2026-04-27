@@ -630,6 +630,7 @@ class HumanInteractionMixin:
                         f"执行以下命令（含写操作，需确认）：\n{cmd_list}"
                     )
                     if approved:
+                        self.chat.clear_interrupt()  # 批准后清除残留中断标志，避免命令被误杀
                         result_text = self._run_collab_commands(commands)
                         self.chat.say(f"执行结果：\n{result_text}")
                         collab_history.append({
@@ -651,6 +652,7 @@ class HumanInteractionMixin:
                         f"执行以下命令：\n{cmd_list}"
                     )
                     if approved:
+                        self.chat.clear_interrupt()  # 批准后清除残留中断标志，避免命令被误杀
                         result_text = self._run_collab_commands(commands)
                         self.chat.say(f"执行结果：\n{result_text}")
                         collab_history.append({

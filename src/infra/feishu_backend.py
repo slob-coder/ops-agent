@@ -298,6 +298,8 @@ class FeishuBackend(ChannelBackend):
         logger.info(f"FeishuBackend received: {text[:100]}")
         if self._waiting_approval:
             self._approval_queue.put(("feishu", text))
+            # approval 不是中断信号，不 set interrupted
+            return
         else:
             self._inbox.put(("feishu", text))
         self._interrupted.set()
