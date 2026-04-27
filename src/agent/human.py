@@ -100,12 +100,15 @@ class HumanInteractionMixin:
                 )
                 return
             if hasattr(self.notebook, "record_fp_rejection"):
-                self.notebook.record_fp_rejection(
+                result = self.notebook.record_fp_rejection(
                     pattern,
                     incident_path=self.current_incident or "",
                     context=f"human marked at {datetime.now().isoformat()}",
                 )
-                self.chat.say(f"已记录误报: {pattern}", "info")
+                if result:
+                    self.chat.say(f"已记录误报: {pattern}", "info")
+                else:
+                    self.chat.say(f"⚠️ 误报记录失败: {pattern}，请检查日志", "warning")
             else:
                 self.chat.say("当前未启用 Smart Notebook,误报记录不可用。", "info")
             return
