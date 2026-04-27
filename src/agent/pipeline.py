@@ -230,6 +230,14 @@ class PipelineMixin:
         response = self._ask_llm(prompt, phase="DIAGNOSE")
         result = self._parse_diagnosis(response)
 
+        # 解析失败时重试一次
+        if result.get("hypothesis") == "JSON 解析失败，无法提取诊断":
+            logger.warning("diagnose JSON 解析失败，重试一次")
+            self.chat.say("⚠️  diagnose JSON 解析失败，重试一次", "warning")
+            retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字。确保 JSON 完整，不要截断。"
+            response = self._ask_llm(retry_prompt, phase="DIAGNOSE_RETRY")
+            result = self._parse_diagnosis(response)
+
         # 屏幕只显示结论
         conf = result.get("confidence", 0)
         rtype = result.get("type", "unknown")
@@ -351,6 +359,15 @@ class PipelineMixin:
 
         response = self._ask_llm(prompt, phase="PLAN")
         plan = self._parse_plan(response)
+
+        # 解析失败时重试一次
+        if plan is None:
+            logger.warning("plan JSON 解析失败，重试一次")
+            self.chat.say("⚠️  plan JSON 解析失败，重试一次", "warning")
+            retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字或代码查看请求。确保 JSON 完整，不要截断。"
+            response = self._ask_llm(retry_prompt, phase="PLAN_RETRY")
+            plan = self._parse_plan(response)
+
         if plan:
             self.chat.say(
                 f"方案: {plan.action}  (L{plan.trust_level})",

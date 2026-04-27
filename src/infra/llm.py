@@ -44,7 +44,7 @@ class RetryingLLM:
         self.consecutive_failures: int = 0
         self.last_failure: str = ""
 
-    def ask(self, prompt: str, system: str = "", max_tokens: int = 4096,
+    def ask(self, prompt: str, system: str = "", max_tokens: int = 0,
             interrupt_check=None) -> str:
         last_err: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
@@ -92,14 +92,17 @@ class LLMClient:
         "anthropic": {
             "model": "claude-sonnet-4-20250514",
             "base_url": "",
+            "max_tokens": 16384,
         },
         "openai": {
             "model": "gpt-4o",
             "base_url": "",
+            "max_tokens": 16384,
         },
         "zhipu": {
             "model": "glm-4-plus",
             "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+            "max_tokens": 4096,
         },
     }
 
@@ -115,6 +118,7 @@ class LLMClient:
         self.model = os.getenv("OPS_LLM_MODEL") or defaults["model"]
         self.base_url = os.getenv("OPS_LLM_BASE_URL") or defaults["base_url"]
         self.api_key = os.getenv("OPS_LLM_API_KEY", "")
+        self.default_max_tokens = int(os.getenv("OPS_LLM_MAX_TOKENS", "0"))
         self._client = None
 
     def _get_client(self):
@@ -143,7 +147,7 @@ class LLMClient:
 
         return self._client
 
-    def ask(self, prompt: str, system: str = "", max_tokens: int = 4096,
+    def ask(self, prompt: str, system: str = "", max_tokens: int = 0,
             interrupt_check=None) -> str:
         """向 LLM 提问，返回纯文本回答
 
@@ -157,6 +161,8 @@ class LLMClient:
             为了能在 LLM 长时间生成时响应人类指令，使用流式 API。
             每收到一个 chunk 就检查一次 interrupt_check。
         """
+        if max_tokens <= 0:
+            max_tokens = self.default_max_tokens or self.PROVIDER_DEFAULTS[self.provider].get("max_tokens", 4096)
         client = self._get_client()
 
         logger.debug(f"LLM request ({self.provider}/{self.model}): {prompt}...")

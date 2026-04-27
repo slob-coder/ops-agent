@@ -126,7 +126,7 @@ class PromptsMixin:
             lines.append(f"⚠️ 处于失败冷却期,还需 {s['cooldown_remaining']} 秒")
         return "\n".join(lines)
 
-    def _ask_llm(self, prompt: str, max_tokens: int = 4096,
+    def _ask_llm(self, prompt: str, max_tokens: int = 0,
                  allow_interrupt: bool = True,
                  phase: str = "") -> str:
         """统一的 LLM 调用入口 —— 始终携带 system prompt
