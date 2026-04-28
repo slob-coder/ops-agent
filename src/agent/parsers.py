@@ -233,7 +233,9 @@ class ParsersMixin:
             elif isinstance(s, str) and s.strip():
                 normalized_steps.append({"command": s.strip(), "purpose": "", "wait_seconds": 0})
 
-        if not normalized_steps:
+        # COLLECT_MORE / ESCALATE 时允许空 steps（只要 gaps 非空或有 escalate 理由）
+        next_action = data.get("next_action", "READY")
+        if not normalized_steps and next_action not in ("COLLECT_MORE", "ESCALATE"):
             return None
 
         # 规范化 rollback_steps
