@@ -12,7 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-x86_64" \
         -o /usr/local/lib/docker/cli-plugins/docker-compose && \
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose && \
-    docker compose version
+    docker compose version && \
+    printf '#!/bin/sh\nexec docker compose "$@"\n' > /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose
 
 WORKDIR /app
 
