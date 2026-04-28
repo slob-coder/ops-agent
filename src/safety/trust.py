@@ -32,6 +32,8 @@ class ActionPlan:
     expected: str = ""
     trust_level: int = 2
     reason: str = ""
+    next_action: str = "READY"  # READY | COLLECT_MORE | ESCALATE
+    gaps: list = field(default_factory=list)  # [{"description": "...", "command": "..."}]
 
     @property
     def action(self) -> str:

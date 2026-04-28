@@ -319,54 +319,78 @@ class PipelineMixin:
             self.chat.say("✗ 补丁循环三次都未通过,降级走常规修复", "warning")
 
     def _plan(self, diagnosis: dict):
-        """制定修复方案"""
-        self.chat.progress("制定修复方案...")
-        permissions = self.notebook.read("config/permissions.md")
+        """制定修复方案（支持 COLLECT_MORE 多轮收集上下文）"""
+        max_plan_rounds = 3
+        gap_results = ""
 
-        # 找匹配的 Playbook
-        hypothesis = diagnosis.get("hypothesis", "")
-        relevant_files = self.notebook.find_relevant(hypothesis)
-        playbook = ""
-        for f in relevant_files:
-            if "playbook" in f or "lesson" in f:
-                playbook += self.notebook.read(f) + "\n"
+        for plan_round in range(1, max_plan_rounds + 1):
+            self.chat.progress(f"制定修复方案... (第{plan_round}轮)")
+            permissions = self.notebook.read("config/permissions.md")
 
-        # 提取构建/部署配置
-        build_deploy_context = self._get_build_deploy_context()
+            # 找匹配的 Playbook
+            hypothesis = diagnosis.get("hypothesis", "")
+            relevant_files = self.notebook.find_relevant(hypothesis)
+            playbook = ""
+            for f in relevant_files:
+                if "playbook" in f or "lesson" in f:
+                    playbook += self.notebook.read(f) + "\n"
 
-        # 加载项目地图：code_bug 类型时智能裁剪
-        project_map = ""
-        if diagnosis.get("type") == "code_bug":
-            keywords = [diagnosis.get("hypothesis", ""), diagnosis.get("facts", "")]
-            project_map = self._load_agents_md_section(keywords=keywords)
-        elif self.current_target and self.current_target.source_repos:
-            project_map = self._load_agents_md()
+            # 提取构建/部署配置
+            build_deploy_context = self._get_build_deploy_context()
 
-        # 复用 diagnose 阶段的源码定位结果
-        source_text = "（无）"
-        if hasattr(self, "_last_locate_result") and self._last_locate_result and self._last_locate_result.locations:
-            source_text = self._last_locate_result.render()
+            # 加载项目地图：code_bug 类型时智能裁剪
+            project_map = ""
+            if diagnosis.get("type") == "code_bug":
+                keywords = [diagnosis.get("hypothesis", ""), diagnosis.get("facts", "")]
+                project_map = self._load_agents_md_section(keywords=keywords)
+            elif self.current_target and self.current_target.source_repos:
+                project_map = self._load_agents_md()
 
-        prompt = self._fill_prompt(
-            "plan",
-            diagnosis=str(diagnosis),
-            matched_playbook=playbook or "（无匹配的 Playbook）",
-            permissions=permissions,
-            build_deploy_context=build_deploy_context,
-            project_map=project_map or "（无项目地图）",
-            source_locations=source_text,
-        )
+            # 复用 diagnose 阶段的源码定位结果
+            source_text = "（无）"
+            if hasattr(self, "_last_locate_result") and self._last_locate_result and self._last_locate_result.locations:
+                source_text = self._last_locate_result.render()
 
-        response = self._ask_llm(prompt, phase="PLAN")
-        plan = self._parse_plan(response)
+            prompt = self._fill_prompt(
+                "plan",
+                diagnosis=str(diagnosis),
+                matched_playbook=playbook or "（无匹配的 Playbook）",
+                permissions=permissions,
+                build_deploy_context=build_deploy_context,
+                project_map=project_map or "（无项目地图）",
+                source_locations=source_text,
+                gap_results=gap_results or "（无）",
+            )
 
-        # 解析失败时重试一次
-        if plan is None:
-            logger.warning("plan JSON 解析失败，重试一次")
-            self.chat.say("⚠️  plan JSON 解析失败，重试一次", "warning")
-            retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字或代码查看请求。确保 JSON 完整，不要截断。"
-            response = self._ask_llm(retry_prompt, phase="PLAN_RETRY")
+            response = self._ask_llm(prompt, phase=f"PLAN_R{plan_round}")
             plan = self._parse_plan(response)
+
+            # 解析失败时重试一次
+            if plan is None:
+                logger.warning("plan JSON 解析失败，重试一次")
+                self.chat.say("⚠️  plan JSON 解析失败，重试一次", "warning")
+                retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字或代码查看请求。确保 JSON 完整，不要截断。"
+                response = self._ask_llm(retry_prompt, phase=f"PLAN_R{plan_round}_RETRY")
+                plan = self._parse_plan(response)
+                if plan is None:
+                    continue
+
+            # COLLECT_MORE: 执行 gap 命令，收集上下文后重新规划
+            if plan.next_action == "COLLECT_MORE" and plan.gaps and plan_round < max_plan_rounds:
+                self.chat.say(f"📋 Plan 阶段收集上下文 (第{plan_round}轮)，执行 {len(plan.gaps)} 条查询命令...", "info")
+                new_results = self._collect_gap_commands(plan.gaps)
+                if gap_results:
+                    gap_results = gap_results + "\n\n---\n\n" + new_results
+                else:
+                    gap_results = new_results
+                continue
+
+            # READY 或 ESCALATE 或最后一轮 → 退出循环
+            if plan and plan.next_action == "ESCALATE":
+                self.chat.say("⚠️ 修复方案超出自动执行能力，需要人工介入", "warning")
+                return None
+
+            break
 
         if plan:
             self.chat.say(

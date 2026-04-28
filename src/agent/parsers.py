@@ -252,6 +252,22 @@ class ParsersMixin:
             elif isinstance(s, str) and s.strip():
                 verify.append({"command": s.strip(), "expect": ""})
 
+        # 规范化 gaps
+        gaps = data.get("gaps", [])
+        if not isinstance(gaps, list):
+            gaps = []
+        normalized_gaps = []
+        for g in gaps:
+            if isinstance(g, dict):
+                normalized_gaps.append(g)
+            elif isinstance(g, str):
+                normalized_gaps.append({"description": g, "command": ""})
+
+        valid_plan_actions = {"READY", "COLLECT_MORE", "ESCALATE"}
+        next_action = data.get("next_action", "READY")
+        if next_action not in valid_plan_actions:
+            next_action = "READY"
+
         return ActionPlan(
             steps=normalized_steps,
             rollback_steps=rollback,
@@ -259,6 +275,8 @@ class ParsersMixin:
             expected=data.get("expected", "系统恢复正常"),
             trust_level=int(data.get("trust_level", 2)),
             reason=data.get("reason", ""),
+            next_action=next_action,
+            gaps=normalized_gaps,
         )
 
     # ─── targeted observe（替代 _quick_observe）───

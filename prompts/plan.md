@@ -20,11 +20,16 @@
 
 {source_locations}
 
+## 前几轮收集的额外上下文
+{gap_results}
+
 ## 任务
 制定修复方案。**严格输出以下 JSON**（不要输出其他内容）：
 
 ```json
 {
+  "next_action": "READY",
+  "gaps": [],
   "steps": [
     {"command": "要执行的命令", "purpose": "这条命令的目的", "wait_seconds": 0}
   ],
@@ -42,6 +47,11 @@
 
 ### 字段说明
 
+- **next_action**: 你认为下一步该做什么（**关键字段**）：
+  - `READY` — 已有足够信息，steps 中的修复命令精确可执行
+  - `COLLECT_MORE` — 还需要更多信息才能制定精确修复方案，在 gaps 中列出要执行的只读命令
+  - `ESCALATE` — 修复超出自动执行能力，需要人工介入
+- **gaps**: 当 next_action 为 `COLLECT_MORE` 时必填。每项包含 `description`（说明需要看什么）和 `command`（具体的只读 shell 命令）。next_action 为 READY 时留空数组 `[]`
 - **steps**: 按顺序执行的修复命令。每条包含：
   - `command`: 要执行的 shell 命令
   - `purpose`: 这条命令的目的（一句话）
@@ -53,6 +63,19 @@
 - **expected**: 一句话描述修复成功后的系统状态
 - **trust_level**: 0=只读, 1=写笔记, 2=重启/改配置, 3=改代码/提PR, 4=破坏性(不允许)
 - **reason**: 一句话说明修复理由
+
+### COLLECT_MORE 的典型场景（重要！）
+
+**当你不确定如何精确修复时，必须设 `next_action: COLLECT_MORE`，在 gaps 中列出需要查看的代码/配置/日志。**
+
+常见场景：
+- 需要查看函数的完整定义（而不只是报错那几行）
+- 需要理解调用链上下游的代码逻辑
+- 需要确认配置项的当前值
+- 需要查看测试用例理解预期行为
+- 需要了解相关文件的结构和接口
+
+**绝对不要用 cat/head/tail/grep 等只读命令填凑 steps！** steps 里的每条命令都必须是真实的修复操作（修改文件、重启服务、部署代码等）。如果你发现自己在 steps 里写了查看命令，说明你应该设 `next_action: COLLECT_MORE`。
 
 ### steps 完整流程（重要！）
 
@@ -68,6 +91,7 @@
 **不要跳过构建和部署步骤！** 代码修改后如果不构建和部署，验证会失败（运行的是旧代码）。
 
 ## 重要
+- **如果信息不足以制定精确修复方案，设 next_action 为 COLLECT_MORE，不要猜测**
 - steps 中只放修复命令，**不要把回滚命令或验证命令放进 steps**
 - verify_steps 中只放只读检查命令，不要放修改操作
 - 改配置前，在 steps 中先加一条 `cp file file.bak.时间戳` 备份命令
