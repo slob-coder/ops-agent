@@ -218,7 +218,8 @@ class ParsersMixin:
             return None
 
         steps = data.get("steps", [])
-        if not isinstance(steps, list) or not steps:
+        next_action = data.get("next_action", "READY")
+        if not isinstance(steps, list) or (not steps and next_action not in ("COLLECT_MORE", "ESCALATE")):
             return None
 
         # 规范化 steps
