@@ -100,31 +100,45 @@ class ParsersMixin:
 
         return commands
 
+    @staticmethod
+    def _strip_trailing_commas(text: str) -> str:
+        """移除 JSON 文本中的尾随逗号（LLM 常见输出问题）。
+
+        处理 ] 和 } 前的逗号，如 [1, 2,] → [1, 2]
+        """
+        # ,] → ]  ,} → }  （逗号后可选空白再跟闭括号）
+        return re.sub(r',\s*([}\]])', r'\1', text)
+
     def _extract_json(self, response: str) -> Optional[dict]:
         """从 LLM 回复中提取 JSON 对象。
 
         优先匹配 ```json 代码块，fallback 到整个文本 json.loads，
         最后尝试最外层 { ... }。
+        自动修复 LLM 常见的尾随逗号问题。
         """
+        candidates = []
+
         # 尝试 ```json ... ``` 块
         match = re.search(r'```json\s*\n(.*?)```', response, re.DOTALL)
         if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
+            candidates.append(match.group(1).strip())
 
-        # 尝试整个文本
-        try:
-            return json.loads(response.strip())
-        except json.JSONDecodeError:
-            pass
+        # 整个文本
+        candidates.append(response.strip())
 
         # 尝试找 { ... } 最外层
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if match:
+            candidates.append(match.group(0))
+
+        # 逐个尝试解析，先原样，再修复尾随逗号
+        for text in candidates:
             try:
-                return json.loads(match.group(0))
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass
+            try:
+                return json.loads(self._strip_trailing_commas(text))
             except json.JSONDecodeError:
                 pass
 
