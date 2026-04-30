@@ -647,9 +647,15 @@ class PipelineMixin:
             evidence_links=[f"[[incidents/active/{self.current_incident}]]"],
         )
 
-    def _close_incident(self, summary: str):
-        """关闭并归档 Incident"""
+    def _close_incident(self, summary: str, skip_reflect: bool = False):
+        """关闭并归档 Incident，始终执行反思（除非显式跳过）"""
         if self.current_incident:
+            # 关闭前执行反思，即使是中断/否决也要沉淀经验
+            if not skip_reflect:
+                try:
+                    self._reflect()
+                except Exception as e:
+                    logger.warning(f"reflect on close failed: {e}")
             self._emit_audit("incident_closed", incident=self.current_incident, summary=summary[:200])
             self.notebook.close_incident(self.current_incident, summary)
             self.current_incident = None

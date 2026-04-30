@@ -858,6 +858,8 @@ class OpsAgent(
             # ── REFLECT ──
             elif state == "REFLECT":
                 self._reflect()
+                # _close_incident 内部也会调 reflect，这里跳过避免重复
+                self._close_incident(f"已解决: {summary}", skip_reflect=True)
                 break
         else:
             # 循环耗尽，未能在最大轮次内解决问题
@@ -878,14 +880,14 @@ class OpsAgent(
 
         # ── 关闭或挂起 Incident ──
         if self.current_incident:
-            if fix_verified:
-                self._close_incident(f"已解决: {summary}")
-            else:
+            # fix_verified 的已在 REFLECT 状态中关闭
+            if not fix_verified:
                 self.notebook.append_to_incident(
                     self.current_incident,
                     f"\n## 状态：未解决\n"
                     f"问题尚未修复，将在下轮巡检重新处理。\n",
                 )
+                self._close_incident("未解决")
                 self.limits.record_incident_end()
 
     # ═══════════════════════════════════════════
