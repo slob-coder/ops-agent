@@ -393,14 +393,20 @@ class PipelineMixin:
             break
 
         if plan:
-            # 防御：READY 但无有效 steps → 降级或返回 None
-            if plan.next_action == "READY" and not plan.steps:
-                logger.warning("plan READY 但无有效 steps，降级为 COLLECT_MORE 或重试")
-                self.chat.say("⚠️ 修复方案无有效步骤，重新收集信息", "warning")
-                if plan.gaps:
-                    plan.next_action = "COLLECT_MORE"
-                else:
+            # 防御：无有效 steps（READY 空 steps，或 COLLECT_MORE 超轮次）
+            if not plan.steps:
+                if plan.next_action == "COLLECT_MORE":
+                    # 超过 max_plan_rounds 仍然 COLLECT_MORE → ESCALATE
+                    logger.warning("plan 连续 COLLECT_MORE 超出轮次限制，升级为人工介入")
+                    self.chat.say("⚠️ 信息仍不足，无法制定修复方案，需要人工介入", "warning")
                     return None
+                elif plan.next_action == "READY":
+                    logger.warning("plan READY 但无有效 steps，降级为 COLLECT_MORE 或重试")
+                    self.chat.say("⚠️ 修复方案无有效步骤，重新收集信息", "warning")
+                    if plan.gaps:
+                        plan.next_action = "COLLECT_MORE"
+                    else:
+                        return None
             self.chat.say(
                 f"方案: {plan.action}  (L{plan.trust_level})",
                 "action",
