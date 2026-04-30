@@ -61,15 +61,17 @@ class OpsAgent(
         "incident": 2,
     }
 
-    def __init__(self, notebook_path: str, targets: list = None,
+    def __init__(self, workspace_path: str, targets: list = None,
                  readonly: bool = False, fallback_target=None):
         """
         参数:
-            notebook_path: Notebook 目录
+            workspace_path: Workspace 根目录
             targets: list[TargetConfig],多个目标。如果为空,使用 fallback_target
             readonly: 只读模式
             fallback_target: 当 targets 为空时的兜底目标(用于命令行 --target 启动)
         """
+        self.workspace_path = str(Path(workspace_path).resolve())
+        notebook_path = str(Path(workspace_path) / "notebook")
         self.llm = LLMClient()
         # Notebook 工厂：smart-notebook 已安装 → Smart，否则 → Basic
         self.notebook = create_notebook(notebook_path=notebook_path, llm=self.llm)

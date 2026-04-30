@@ -3,10 +3,10 @@ ops-agent check — 配置校验
 
 用法:
   ops-agent check
-  ops-agent check --notebook ./notebook
+  ops-agent check --workspace /root/.ops-agent
 
 检查:
-1. notebook/.env — LLM 凭据是否存在
+1. .env — LLM 凭据是否存在 (workspace/.env)
 2. notebook/config/targets.yaml — 格式和必填字段
 3. notebook/config/limits.yaml — 格式和关键字段
 4. notebook/config/permissions.md — 是否存在
@@ -81,9 +81,14 @@ def _load_env_file(env_path: Path) -> dict:
     return env
 
 
-def check_env(notebook_path: str, result: CheckResult):
+def check_env(workspace: str, result: CheckResult):
     """检查 LLM 环境变量"""
-    env_path = Path(notebook_path) / ".env"
+    env_path = Path(workspace) / ".env"
+    # 向后兼容：workspace/notebook/.env
+    if not env_path.exists():
+        legacy = Path(workspace) / "notebook" / ".env"
+        if legacy.exists():
+            env_path = legacy
     env = _load_env_file(env_path)
 
     # 合并系统环境变量（系统优先）
@@ -280,8 +285,11 @@ def check_llm_connection(result: CheckResult):
         result.error(f"LLM 连通性测试失败: {e}")
 
 
-def run_check(notebook_path: str = "./notebook", test_llm: bool = False):
+def run_check(workspace_path: str = "~/.ops-agent", test_llm: bool = False):
     """运行完整校验"""
+    workspace = Path(workspace_path).expanduser().resolve()
+    notebook_path = str(workspace / "notebook")
+
     result = CheckResult()
 
     print()
@@ -290,14 +298,18 @@ def run_check(notebook_path: str = "./notebook", test_llm: bool = False):
     print()
 
     # 先加载 .env
-    env_path = Path(notebook_path) / ".env"
+    env_path = workspace / ".env"
+    if not env_path.exists():
+        legacy = workspace / "notebook" / ".env"
+        if legacy.exists():
+            env_path = legacy
     env = _load_env_file(env_path)
     for key, value in env.items():
         if key not in os.environ:
             os.environ[key] = value
 
     print("1. LLM 配置")
-    check_env(notebook_path, result)
+    check_env(str(workspace), result)
 
     print()
     print("2. 目标配置")
