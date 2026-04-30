@@ -4,7 +4,7 @@ ops-agent init — 交互式配置引导
 用法:
   python main.py init                     # 交互式
   python main.py init --from-env          # 全从环境变量读，缺了报错
-  python main.py init --notebook ./nb     # 指定 notebook 目录
+  python main.py init --workspace /root/.ops-agent  # 指定 workspace 目录
 
 环境变量映射（--from-env 模式 / Docker 部署）:
   OPS_LLM_PROVIDER        LLM 提供商 (anthropic/openai/zhipu)
@@ -38,6 +38,7 @@ TARGETS_FILE = "targets.yaml"
 LIMITS_FILE = "limits.yaml"
 PERMISSIONS_FILE = "permissions.md"
 NOTIFIER_FILE = "notifier.yaml"
+CONTEXT_LIMITS_FILE = "context_limits.yaml"
 
 LLM_PROVIDERS = {
     "anthropic": {"model": "claude-sonnet-4-20250514", "base_url": "", "env_key": "ANTHROPIC_API_KEY"},
@@ -296,6 +297,76 @@ type: none
     return "\n".join(lines)
 
 
+def _generate_context_limits_yaml() -> str:
+    """生成默认 context_limits.yaml"""
+    return """\
+# ═══════════════════════════════════════════════════════════════
+# OpsAgent 上下文窗口限制
+# ═══════════════════════════════════════════════════════════════
+#
+# 控制传入 LLM 的各类文本的最大字符数。
+# 所有值单位为字符数（除 tree_entries 为条目数）。
+# 修改后 Agent 下个循环周期自动生效。
+
+# ── 入职探索 ──
+explore_output_chars: 1000
+
+# ── 观测阶段 ──
+observe_output_chars: 1500
+max_observations_chars: 8000
+
+# ── 诊断阶段 ──
+playbook_search_chars: 500
+playbook_content_chars: 1500
+incident_history_chars: 1000
+source_context_trace_chars: 2000
+diagnosis_json_chars: 500
+prev_summary_chars: 1000
+
+# ── 补充收集 ──
+gap_output_incident_chars: 2000
+gap_output_trace_chars: 1500
+
+# ── 计划阶段 ──
+verify_action_desc_chars: 500
+verify_expected_chars: 300
+
+# ── 执行阶段 ──
+exec_result_chars: 6000
+exec_result_for_rediagnose_chars: 4000
+
+# ── 验证阶段 ──
+verify_state_chars: 2000
+verify_response_trace_chars: 500
+
+# ── 复盘阶段 ──
+reflect_incident_chars: 4000
+
+# ── 源码定位 ──
+source_location_render_chars: 2000
+source_function_snippet_chars: 4000
+
+# ── 自修复上下文 ──
+self_repair_log_chars: 8000
+self_repair_tree_entries: 200
+self_repair_incident_chars: 3000
+self_repair_config_chars: 4000
+self_repair_state_dump_chars: 3000
+
+# ── 补丁应用 ──
+patch_output_truncate_chars: 5000
+
+# ── 人类交互 ──
+show_file_preview_chars: 2000
+conversation_incident_chars: 3000
+
+# ── 项目地图 (AGENTS.md) ──
+agents_md_chars: 8000
+
+# ── 自修复输出 ──
+self_repair_output_tail_chars: 1500
+"""
+
 # ── 连通性测试 ──
 
 def _test_llm(provider: str, api_key: str, base_url: str, model: str) -> bool:
@@ -359,13 +430,15 @@ def _test_ssh(host: str, port: int = 22, key_file: str = "", password_env: str =
 
 # ── 主流程 ──
 
-def run_init(notebook_path: str = "./notebook", from_env: bool = False):
+def run_init(workspace_path: str = "~/.ops-agent", from_env: bool = False):
     """运行 init 引导"""
 
     if from_env:
         os.environ["OPS_INIT_FROM_ENV"] = "1"
 
-    config_dir = Path(notebook_path) / NOTEBOOK_CONFIG_DIR
+    workspace = Path(workspace_path).expanduser().resolve()
+    notebook_path = workspace / "notebook"
+    config_dir = notebook_path / NOTEBOOK_CONFIG_DIR
 
     # 检查已有配置
     targets_path = config_dir / TARGETS_FILE
@@ -379,6 +452,11 @@ def run_init(notebook_path: str = "./notebook", from_env: bool = False):
                 return
         else:
             print(f"⚠️  Overwriting existing {targets_path}")
+
+    # 创建 workspace 目录结构
+    for d in [config_dir, notebook_path / "playbook",
+              notebook_path / "lessons", workspace / "logs"]:
+        d.mkdir(parents=True, exist_ok=True)
 
     _print_banner()
 
@@ -575,12 +653,20 @@ def run_init(notebook_path: str = "./notebook", from_env: bool = False):
         notifier_path.write_text(_generate_notifier_yaml(notifier_type), encoding="utf-8")
         print(f"✅ {notifier_path}")
 
+    # context_limits.yaml — 只在不存在时生成
+    ctx_path = config_dir / CONTEXT_LIMITS_FILE
+    if not ctx_path.exists():
+        ctx_path.write_text(_generate_context_limits_yaml(), encoding="utf-8")
+        print(f"✅ {ctx_path}")
+    else:
+        print(f"ℹ️  {ctx_path} already exists, skipping")
+
     # ── 6. 持久化环境变量 ──
     print()
     print("━━━ Environment Variables ━━━")
 
-    # 写 .env 文件到 notebook 目录
-    env_path = Path(notebook_path) / ".env"
+    # 写 .env 文件到 workspace 根目录
+    env_path = workspace / ".env"
     env_lines = [
         f"OPS_LLM_PROVIDER={provider}",
         f"OPS_LLM_API_KEY={api_key}",
@@ -657,4 +743,4 @@ def run_init(notebook_path: str = "./notebook", from_env: bool = False):
     print()
     print("━━━ Next Steps ━━━")
     print(f"  1. Load env:  source {env_path}")
-    print(f"  2. Start:     ops-agent --notebook {notebook_path}")
+    print(f"  2. Start:     ops-agent --workspace {workspace}")

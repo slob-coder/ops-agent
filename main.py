@@ -4,9 +4,6 @@ OpsAgent — 数字运维员工
 一个实时在岗、会成长、在人类监督下工作的运维 Agent。
 
 用法:
-  # 安装命令行工具
-  pip install -e .
-
   # 初始化配置
   ops-agent init
 
@@ -22,7 +19,8 @@ OpsAgent — 数字运维员工
   # 只读模式（不执行任何修改）
   ops-agent --readonly
 
-  # 未安装时用 python main.py 替代 ops-agent
+  # 指定 workspace 目录
+  ops-agent --workspace /root/.ops-agent
 """
 
 import os
@@ -36,20 +34,34 @@ from src.infra.tools import TargetConfig
 # 重新导出 OpsAgent，保证 `from main import OpsAgent` 继续工作
 from src.core import OpsAgent  # noqa: F401
 
+# 默认 workspace 目录
+DEFAULT_WORKSPACE = "~/.ops-agent"
 
-def _load_dotenv():
-    """自动加载 notebook/.env 文件到环境变量（不覆盖已有值）"""
-    import sys
-    notebook = "./notebook"
-    # 从命令行参数获取 notebook 路径
-    for i, arg in enumerate(sys.argv):
-        if arg == "--notebook" and i + 1 < len(sys.argv):
-            notebook = sys.argv[i + 1]
-            break
 
-    env_path = Path(notebook) / ".env"
+def _resolve_workspace(args_workspace: str, args_notebook: str = "") -> str:
+    """解析 workspace 路径，--workspace 优先，--notebook 向后兼容"""
+    if args_workspace:
+        return str(Path(args_workspace).expanduser().resolve())
+    # 向后兼容：--notebook 指定时，推导 workspace 为其父目录（如果子目录名是 notebook）
+    if args_notebook:
+        nb = Path(args_notebook).expanduser().resolve()
+        if nb.name == "notebook":
+            return str(nb.parent)
+        # 否则 notebook_path 就是 workspace 本身（兼容旧用法）
+        return str(nb)
+    return str(Path(DEFAULT_WORKSPACE).expanduser().resolve())
+
+
+def _load_dotenv(workspace: str):
+    """自动加载 workspace/.env 文件到环境变量（不覆盖已有值）"""
+    env_path = Path(workspace) / ".env"
     if not env_path.exists():
-        return
+        # 向后兼容：尝试 notebook/.env
+        legacy_path = Path(workspace) / "notebook" / ".env"
+        if legacy_path.exists():
+            env_path = legacy_path
+        else:
+            return
 
     with open(env_path) as f:
         for line in f:
@@ -74,12 +86,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "init", help="Interactive setup wizard",
         description="Generate config files with an interactive guide",
     )
-    init_parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
+    init_parser.add_argument("--workspace", default=DEFAULT_WORKSPACE,
+                             help="Workspace 根目录 (默认 ~/.ops-agent)")
+    init_parser.add_argument("--notebook", default="",
+                             help="[deprecated] 使用 --workspace 代替")
     init_parser.add_argument("--from-env", action="store_true",
                              help="Read all config from env vars, fail on missing")
 
+    # ── check 子命令 ──
+    check_parser = subparsers.add_parser(
+        "check", help="Config validation",
+    )
+    check_parser.add_argument("--workspace", default=DEFAULT_WORKSPACE,
+                              help="Workspace 根目录 (默认 ~/.ops-agent)")
+    check_parser.add_argument("--notebook", default="",
+                              help="[deprecated] 使用 --workspace 代替")
+    check_parser.add_argument("--test-llm", action="store_true",
+                              help="Test LLM connectivity")
+
     # ── 运行模式参数（无子命令时）──
-    parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
+    parser.add_argument("--workspace", default=DEFAULT_WORKSPACE,
+                        help="Workspace 根目录 (默认 ~/.ops-agent)")
+    parser.add_argument("--notebook", default="",
+                        help="[deprecated] 使用 --workspace 代替")
     parser.add_argument("--targets", default="",
                         help="targets.yaml 路径(多目标模式,推荐)")
     parser.add_argument("--target", default="",
@@ -95,9 +124,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main():
-    # 手动解析以支持子命令和主参数共存
-    # 扫描 argv 查找子命令（支持子命令不在第一个位置的情况）
     import sys
+
+    # 扫描子命令
     subcmd = None
     skip_next = False
     for i, arg in enumerate(sys.argv[1:], 1):
@@ -108,53 +137,61 @@ def main():
             subcmd = arg
             break
         elif arg.startswith("-") and not arg.startswith("--from-env") and not arg.startswith("--test-llm"):
-            # 带 value 的 flag，跳过下一个参数
-            if arg in ("--notebook", "--targets", "--target", "--key", "--port",
+            if arg in ("--workspace", "--notebook", "--targets", "--target", "--key", "--port",
                        "--targets-file", "--model"):
                 skip_next = True
-            # boolean flags (--readonly, --debug, --password) 不需要跳过
-        else:
-            break  # unknown positional, stop
 
     if subcmd == "init":
         parser = argparse.ArgumentParser(description="ops-agent init")
         parser.add_argument("command", nargs="?", default="init")
-        parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
+        parser.add_argument("--workspace", default=DEFAULT_WORKSPACE,
+                            help="Workspace 根目录 (默认 ~/.ops-agent)")
+        parser.add_argument("--notebook", default="",
+                            help="[deprecated] 使用 --workspace 代替")
         parser.add_argument("--from-env", action="store_true",
                             help="Read all config from env vars, fail on missing")
         args = parser.parse_args()
+        workspace = _resolve_workspace(args.workspace, args.notebook)
         from src.init import run_init
-        run_init(notebook_path=args.notebook, from_env=args.from_env)
+        run_init(workspace_path=workspace, from_env=args.from_env)
         return
 
     if subcmd == "check":
         parser = argparse.ArgumentParser(description="ops-agent check")
         parser.add_argument("command", nargs="?", default="check")
-        parser.add_argument("--notebook", default="./notebook", help="Notebook 目录路径")
-        parser.add_argument("--test-llm", action="store_true", help="Test LLM connectivity")
+        parser.add_argument("--workspace", default=DEFAULT_WORKSPACE,
+                            help="Workspace 根目录 (默认 ~/.ops-agent)")
+        parser.add_argument("--notebook", default="",
+                            help="[deprecated] 使用 --workspace 代替")
+        parser.add_argument("--test-llm", action="store_true",
+                            help="Test LLM connectivity")
         args = parser.parse_args()
+        workspace = _resolve_workspace(args.workspace, args.notebook)
         from src.check import run_check
-        run_check(notebook_path=args.notebook, test_llm=args.test_llm)
+        run_check(workspace_path=workspace, test_llm=args.test_llm)
         return
 
-    # 自动加载 .env 文件
-    _load_dotenv()
-
+    # 主运行模式
     parser = _build_parser()
     args = parser.parse_args()
 
+    workspace = _resolve_workspace(args.workspace, args.notebook)
+
+    # 自动加载 .env 文件
+    _load_dotenv(workspace)
+
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    notebook_path = str(Path(workspace) / "notebook")
 
     # ── 加载目标 ──
     targets = []
     fallback = None
 
-    # 优先尝试 --targets yaml 文件
     targets_file = args.targets
     if not targets_file:
-        # 尝试默认路径 notebook/config/targets.yaml
-        default_path = Path(args.notebook) / "config" / "targets.yaml"
+        default_path = Path(notebook_path) / "config" / "targets.yaml"
         if default_path.exists():
             targets_file = str(default_path)
 
@@ -177,11 +214,11 @@ def main():
 
     if not targets and not fallback:
         fallback = TargetConfig.local()
-        print("ℹ️  未指定目标,使用本机模式。如需多目标请创建 notebook/config/targets.yaml")
+        print(f"ℹ️  未指定目标,使用本机模式。如需多目标请创建 {notebook_path}/config/targets.yaml")
 
     # 启动 Agent
     agent = OpsAgent(
-        notebook_path=args.notebook,
+        workspace_path=workspace,
         targets=targets,
         readonly=args.readonly,
         fallback_target=fallback,
@@ -197,7 +234,6 @@ def main():
     try:
         agent.run()
     finally:
-        # 确保终端状态恢复（防止 echo 丢失）
         from src.infra.chat import _restore_terminal
         _restore_terminal()
 

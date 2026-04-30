@@ -106,7 +106,9 @@ def get_context_limits(notebook_path: str = "") -> ContextLimitsConfig:
         if notebook_path:
             path = os.path.join(notebook_path, "config", "context_limits.yaml")
         else:
-            path = "notebook/config/context_limits.yaml"
+            # 未提供 notebook_path 时尝试从默认 workspace 推导
+            ws = Path("~/.ops-agent").expanduser()
+            path = str(ws / "notebook" / "config" / "context_limits.yaml")
         _instance = ContextLimitsConfig.from_yaml(path)
     return _instance
 
