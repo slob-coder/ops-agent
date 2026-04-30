@@ -86,7 +86,7 @@ class ContextLimitsConfig:
             import yaml
         except ImportError:
             return cls()
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             data = yaml.safe_load(f) or {}
         normalized = {k.replace("-", "_"): v for k, v in data.items()}
         valid = {f.name for f in cls.__dataclass_fields__.values()}

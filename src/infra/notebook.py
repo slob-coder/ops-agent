@@ -152,7 +152,7 @@ class Notebook:
         """追加内容"""
         fp = self.path / relative_path
         fp.parent.mkdir(parents=True, exist_ok=True)
-        with open(fp, "a", encoding="utf-8") as f:
+        with open(fp, "a", encoding="utf-8", errors="replace") as f:
             f.write("\n" + content)
 
     def commit(self, message: str):

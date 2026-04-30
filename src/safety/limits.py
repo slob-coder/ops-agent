@@ -84,7 +84,7 @@ class LimitsConfig:
             import yaml
         except ImportError:
             return cls()
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             data = yaml.safe_load(f) or {}
         # 字段名规范化:支持 - 和 _
         normalized = {k.replace("-", "_"): v for k, v in data.items()}

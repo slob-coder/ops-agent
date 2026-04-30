@@ -109,7 +109,7 @@ class AgentsMdMixin:
 
         # 4. 写入文件
         agents_md_path = os.path.join(repo.path, "AGENTS.md")
-        with open(agents_md_path, "w", encoding="utf-8") as f:
+        with open(agents_md_path, "w", encoding="utf-8", errors="replace") as f:
             f.write(content)
 
         logger.info(f"Generated AGENTS.md for {repo.name} at {agents_md_path}")

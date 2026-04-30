@@ -73,7 +73,7 @@ class PendingEventQueue:
         if d.get("raw"):
             d["raw"] = d["raw"][:4096]
         try:
-            with open(self.path, "a", encoding="utf-8") as f:
+            with open(self.path, "a", encoding="utf-8", errors="replace") as f:
                 f.write(json.dumps(d, ensure_ascii=False) + "\n")
             return True
         except OSError as e:
@@ -131,7 +131,7 @@ class PendingEventQueue:
             return []
         items = []
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -146,7 +146,7 @@ class PendingEventQueue:
 
     def _write_all(self, items: list[dict]):
         tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8", errors="replace") as f:
             for it in items:
                 f.write(json.dumps(it, ensure_ascii=False) + "\n")
             f.flush()

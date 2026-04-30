@@ -393,7 +393,7 @@ class FeishuBackendConfig:
             return cls()
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = yaml.safe_load(f) or {}
         except OSError:
             return cls()

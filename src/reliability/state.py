@@ -51,7 +51,7 @@ class AgentState:
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8", errors="replace") as f:
                 json.dump(asdict(self), f, ensure_ascii=False, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
@@ -67,7 +67,7 @@ class AgentState:
         if not os.path.exists(path):
             return None
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"state load failed: {e}")
