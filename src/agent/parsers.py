@@ -227,12 +227,17 @@ class ParsersMixin:
         from src.safety.trust import ActionPlan
 
         data = self._extract_json(response)
-        if not data or "steps" not in data:
+        if not data:
             logger.error(f"plan 输出不是合法 JSON, response={response[:500]}")
             return None
 
-        steps = data.get("steps", [])
+        # COLLECT_MORE / ESCALATE 可以没有 steps 字段
         next_action = data.get("next_action", "READY")
+        if "steps" not in data and next_action not in ("COLLECT_MORE", "ESCALATE"):
+            logger.error(f"plan JSON 缺少 steps 字段, response={response[:500]}")
+            return None
+
+        steps = data.get("steps", [])
         if not isinstance(steps, list) or (not steps and next_action not in ("COLLECT_MORE", "ESCALATE")):
             return None
 
