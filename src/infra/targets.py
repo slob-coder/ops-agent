@@ -107,7 +107,7 @@ def load_targets(config_path: str) -> list[Target]:
     except ImportError:
         raise RuntimeError("pip install pyyaml")
 
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, "r", encoding="utf-8", errors="replace") as f:
         data = yaml.safe_load(f) or {}
 
     targets = []

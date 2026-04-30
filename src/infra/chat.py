@@ -313,7 +313,7 @@ class HumanChannel:
         filename = getattr(self, '_trace_file', 'patrol') + ".md"
         filepath = os.path.join(trace_dir, filename)
         try:
-            with open(filepath, "a", encoding="utf-8") as f:
+            with open(filepath, "a", encoding="utf-8", errors="replace") as f:
                 f.write(entry)
         except OSError:
             pass

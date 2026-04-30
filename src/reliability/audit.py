@@ -53,7 +53,7 @@ class AuditLog:
 
         path = self._today_file()
         try:
-            with open(path, "a", encoding="utf-8") as f:
+            with open(path, "a", encoding="utf-8", errors="replace") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             return True
         except OSError as e:
@@ -68,7 +68,7 @@ class AuditLog:
             return []
         out = []
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
