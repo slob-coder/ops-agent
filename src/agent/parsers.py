@@ -253,10 +253,15 @@ class ParsersMixin:
             elif isinstance(s, str) and s.strip():
                 normalized_steps.append({"command": s.strip(), "purpose": "", "wait_seconds": 0})
 
-        # COLLECT_MORE / ESCALATE 时允许空 steps（只要 gaps 非空或有 escalate 理由）
+        # READY 时必须有可执行的 steps；COLLECT_MORE / ESCALATE 允许空
         next_action = data.get("next_action", "READY")
         if not normalized_steps and next_action not in ("COLLECT_MORE", "ESCALATE"):
-            return None
+            logger.warning(f"plan READY 但无有效 steps, 原始 steps={steps[:3]}, 降级为 COLLECT_MORE")
+            # 降级：如果 gaps 有内容，转为 COLLECT_MORE；否则返回 None 重试
+            if data.get("gaps"):
+                next_action = "COLLECT_MORE"
+            else:
+                return None
 
         # 规范化 rollback_steps
         rollback = []

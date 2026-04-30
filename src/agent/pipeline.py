@@ -393,6 +393,14 @@ class PipelineMixin:
             break
 
         if plan:
+            # 防御：READY 但无有效 steps → 降级或返回 None
+            if plan.next_action == "READY" and not plan.steps:
+                logger.warning("plan READY 但无有效 steps，降级为 COLLECT_MORE 或重试")
+                self.chat.say("⚠️ 修复方案无有效步骤，重新收集信息", "warning")
+                if plan.gaps:
+                    plan.next_action = "COLLECT_MORE"
+                else:
+                    return None
             self.chat.say(
                 f"方案: {plan.action}  (L{plan.trust_level})",
                 "action",
