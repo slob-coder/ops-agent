@@ -72,6 +72,9 @@ class LimitsConfig:
     max_source_locations: int = 5
     max_unresolved_frames: int = 5
 
+    # Plan 阶段 COLLECT_MORE 循环上限
+    max_plan_rounds: int = 3
+
     # 总开关
     enabled: bool = True
 

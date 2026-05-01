@@ -320,7 +320,7 @@ class PipelineMixin:
 
     def _plan(self, diagnosis: dict):
         """制定修复方案（支持 COLLECT_MORE 多轮收集上下文）"""
-        max_plan_rounds = 3
+        max_plan_rounds = self.limits.config.max_plan_rounds
         gap_results = ""
 
         for plan_round in range(1, max_plan_rounds + 1):
