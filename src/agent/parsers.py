@@ -379,24 +379,36 @@ class ParsersMixin:
 
     def _apply_reflect_updates(self, reflect_response: str):
         """从复盘结果中应用 Playbook 更新"""
-        # 解析 NEW_PLAYBOOK 指令
+        # 解析 NEW_PLAYBOOK 指令（优先 code fence 格式，回退旧格式）
         new_pb = re.search(
-            r"NEW_PLAYBOOK:\s*(\S+\.md)\s*\nCONTENT:\s*\n(.*?)(?=\n###|\Z)",
+            r"NEW_PLAYBOOK:\s*(\S+\.md)\s*\nCONTENT:\s*\n```\n(.*?)\n```",
             reflect_response,
             re.DOTALL,
         )
+        if not new_pb:
+            new_pb = re.search(
+                r"NEW_PLAYBOOK:\s*(\S+\.md)\s*\nCONTENT:\s*\n(.*?)(?=\n###|\Z)",
+                reflect_response,
+                re.DOTALL,
+            )
         if new_pb:
             filename = new_pb.group(1)
             content = new_pb.group(2).strip()
             self.notebook.write(f"playbook/{filename}", content)
             self.chat.say(f"创建了新 Playbook: {filename}", "success")
 
-        # 解析 UPDATE_PLAYBOOK 指令
+        # 解析 UPDATE_PLAYBOOK 指令（优先 code fence 格式，回退旧格式）
         update_pb = re.search(
-            r"UPDATE_PLAYBOOK:\s*(\S+\.md)\s*\nAPPEND_CONTENT:\s*\n(.*?)(?=\n###|\Z)",
+            r"UPDATE_PLAYBOOK:\s*(\S+\.md)\s*\nAPPEND_CONTENT:\s*\n```\n(.*?)\n```",
             reflect_response,
             re.DOTALL,
         )
+        if not update_pb:
+            update_pb = re.search(
+                r"UPDATE_PLAYBOOK:\s*(\S+\.md)\s*\nAPPEND_CONTENT:\s*\n(.*?)(?=\n###|\Z)",
+                reflect_response,
+                re.DOTALL,
+            )
         if update_pb:
             filename = update_pb.group(1)
             content = update_pb.group(2).strip()
