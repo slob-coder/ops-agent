@@ -137,6 +137,9 @@ class PromptsMixin:
         3. 流式生成时自动检查人类中断（可被随时打断）
         4. 如果指定了 phase，自动将 prompt/response 写入 trace 文件
         """
+        # 构建 system prompt
+        system = self._build_system_prompt()
+
         # trace: 记录 system prompt（方案 A）
         if phase:
             self.chat.trace(
@@ -155,7 +158,6 @@ class PromptsMixin:
         label = phase or "LLM"
         self.chat.llm_log(label)
 
-        system = self._build_system_prompt()
         check = self._interrupt_check if allow_interrupt else None
         response = self.llm.ask(
             prompt, system=system, max_tokens=max_tokens,
