@@ -137,6 +137,13 @@ class PromptsMixin:
         3. 流式生成时自动检查人类中断（可被随时打断）
         4. 如果指定了 phase，自动将 prompt/response 写入 trace 文件
         """
+        # trace: 记录 system prompt（方案 A）
+        if phase:
+            self.chat.trace(
+                f"{phase} [SYSTEM]",
+                f"```\n{system}\n```",
+            )
+
         # trace: 记录请求
         if phase:
             self.chat.trace(

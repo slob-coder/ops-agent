@@ -93,6 +93,39 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--from-env", action="store_true",
                              help="Read all config from env vars, fail on missing")
 
+    # ── trace-view 子命令 ──
+    trace_parser = subparsers.add_parser(
+        "trace-view", help="Trace log analyzer",
+        description="Analyze trace log files: overview, detail, diff, interactive",
+    )
+    trace_parser.add_argument("trace_file", help="trace .md file path")
+    trace_parser.add_argument("--notebook", default="",
+                              help="notebook dir (for truncation detection & system prompt rebuild)")
+
+    trace_sub = trace_parser.add_subparsers(dest="trace_command")
+
+    # trace-view show
+    show_p = trace_sub.add_parser("show", help="Show phase detail")
+    show_p.add_argument("phase_num", type=int, nargs="?", default=None,
+                        help="Phase number (from overview)")
+    show_p.add_argument("--section", "-s", default="",
+                        help="Only show sections matching this regex")
+    show_p.add_argument("--with-response", "-r", action="store_true",
+                        help="Also show the corresponding RESPONSE")
+    show_p.add_argument("--system", action="store_true",
+                        help="Show system prompt (requires --notebook)")
+
+    # trace-view diff
+    diff_p = trace_sub.add_parser("diff", help="Diff two phases")
+    diff_p.add_argument("phase_a", type=int, help="Phase A number")
+    diff_p.add_argument("phase_b", type=int, help="Phase B number")
+    diff_p.add_argument("--section", "-s", default="",
+                        help="Only diff sections matching this regex")
+
+    # trace-view interactive flag (on main parser)
+    trace_parser.add_argument("-i", "--interactive", action="store_true",
+                              help="Interactive mode")
+
     # ── check 子命令 ──
     check_parser = subparsers.add_parser(
         "check", help="Config validation",
@@ -133,7 +166,7 @@ def main():
         if skip_next:
             skip_next = False
             continue
-        if arg in ("init", "check"):
+        if arg in ("init", "check", "trace-view"):
             subcmd = arg
             break
         elif arg.startswith("-") and not arg.startswith("--from-env") and not arg.startswith("--test-llm"):
@@ -154,6 +187,13 @@ def main():
         workspace = _resolve_workspace(args.workspace, args.notebook)
         from src.init import run_init
         run_init(workspace_path=workspace, from_env=args.from_env)
+        return
+
+    if subcmd == "trace-view":
+        from src.trace_viewer.cli import run as run_trace_view
+        # 收集 trace-view 的参数
+        trace_args = sys.argv[2:]  # skip "ops-agent trace-view"
+        run_trace_view(trace_args)
         return
 
     if subcmd == "check":
