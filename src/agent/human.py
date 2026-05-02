@@ -200,6 +200,28 @@ class HumanInteractionMixin:
                 self.chat.say("还没有 Playbook。")
             return
 
+        if lower in ("list trace", "list traces", "lt"):
+            trace_dir = self.notebook.path / "trace"
+            if not trace_dir.exists():
+                self.chat.say("还没有 trace 文件。")
+                return
+            files = sorted(trace_dir.glob("*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+            if not files:
+                self.chat.say("还没有 trace 文件。")
+                return
+            lines = []
+            for f in files[:20]:
+                size_kb = f.stat().st_size / 1024
+                mtime = f.stat().st_mtime
+                from datetime import datetime
+                ts = datetime.fromtimestamp(mtime).strftime("%m-%d %H:%M")
+                lines.append(f"   • {f.name}  ({size_kb:.1f}KB, {ts})")
+            header = "Trace 文件"
+            if len(files) > 20:
+                header += f"（最近 20 / 共 {len(files)} 条）"
+            self.chat.say(f"{header}：\n" + "\n".join(lines))
+            return
+
         if lower in ("list incidents", "li"):
             active = self.notebook.list_dir("incidents/active")
             archive = self.notebook.list_dir("incidents/archive")
@@ -735,6 +757,7 @@ class HumanInteractionMixin:
             "   ─── 查看 ───\n"
             "   list playbook (lp)    列出所有 Playbook\n"
             "   list incidents (li)   列出 Incident\n"
+            "   list trace (lt)       列出 Trace 文件\n"
             "   show <文件名>          查看某个 Notebook 文件\n"
             "   ─── 自由对话 ───\n"
             "   直接打字提问或派发任务,我会自己想办法。",
