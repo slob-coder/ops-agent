@@ -480,8 +480,11 @@ class PipelineMixin:
 
             results.append(f"STEP {i}: {cmd}\n{str(result)}")
 
-            if not result.success:
-                logger.warning(f"Step {i} failed: {cmd}")
+            # 判断步骤是否失败：先检查 tolerate_exit_codes，再检查 success
+            tolerate_codes = tuple(step.get("tolerate_exit_codes", []))
+            step_failed = not result.success and not result.is_tolerable(tolerate_codes)
+            if step_failed:
+                logger.warning(f"Step {i} failed: {cmd} (exit={result.returncode})")
                 all_success = False
                 break
 

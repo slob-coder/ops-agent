@@ -32,6 +32,10 @@ class CommandResult:
     def success(self) -> bool:
         return self.returncode == 0
 
+    def is_tolerable(self, tolerate_codes: tuple[int, ...] = (1,)) -> bool:
+        """命令退出码在容忍范围内（如 grep 无匹配返回 1）"""
+        return self.returncode in tolerate_codes
+
     @property
     def output(self) -> str:
         """合并输出，优先 stdout"""
