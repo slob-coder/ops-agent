@@ -138,23 +138,52 @@ def _match_section_limit(title: str) -> Optional[str]:
     return None
 
 
+def _extract_json_from_text(text: str) -> Optional[dict]:
+    """从文本中提取 JSON 对象（支持 markdown code fence 包裹）"""
+    text = text.strip()
+    # 尝试 ```json ... ``` 块
+    m = re.search(r'```json\s*\n(.*?)```', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1).strip())
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # 直接解析
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # 最外层 { ... }
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
+
+
 def _summarize_response(text: str, max_len: int = 200) -> str:
     """生成 response 的简要摘要"""
     text = text.strip()
     if not text:
         return "(empty)"
-    # 尝试提取 JSON 中的关键字段
-    try:
-        data = json.loads(text)
+    # 尝试从 JSON 中提取关键字段
+    data = _extract_json_from_text(text)
+    if data and isinstance(data, dict):
         parts = []
+        # verify 阶段的关键字段
+        for key in ("result", "evidence"):
+            if key in data:
+                val = str(data[key])[:80]
+                parts.append(f"{key}: {val}")
+        # diagnose/plan 等阶段的关键字段
         for key in ("next_action", "hypothesis", "facts", "expected", "reason"):
             if key in data:
                 val = str(data[key])[:80]
                 parts.append(f"{key}: {val}")
         if parts:
             return " | ".join(parts)
-    except (json.JSONDecodeError, TypeError):
-        pass
     # 纯文本截断
     first_line = text.split("\n")[0][:max_len]
     return first_line
@@ -162,8 +191,7 @@ def _summarize_response(text: str, max_len: int = 200) -> str:
 
 def _extract_next_action(text: str) -> str:
     """从 response 中提取 next_action"""
-    try:
-        data = json.loads(text.strip())
+    data = _extract_json_from_text(text)
+    if data and isinstance(data, dict):
         return data.get("next_action", "")
-    except (json.JSONDecodeError, TypeError):
-        return ""
+    return ""
