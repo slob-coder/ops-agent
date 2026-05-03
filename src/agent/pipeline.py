@@ -722,13 +722,31 @@ class PipelineMixin:
         return any(sig in state_lower for sig in degradation_signals)
 
     def _parse_verify_response(self, response: str) -> "VerifyResult":
-        """解析 verify prompt 的 LLM 输出为 VerifyResult"""
+        """解析 verify prompt 的 LLM 输出为 VerifyResult — JSON 结构化解析"""
         from src.safety.trust import VerifyResult
-        import re
 
+        data = self._extract_json(response)
+
+        if data and isinstance(data, dict):
+            # JSON 解析成功
+            result_str = str(data.get("result", "UNCERTAIN")).upper()
+            if result_str not in ("SUCCESS", "FAILED", "UNCERTAIN"):
+                result_str = "UNCERTAIN"
+
+            return VerifyResult(
+                result=result_str,
+                evidence=str(data.get("evidence", "")),
+                continue_watch=bool(data.get("continue_watch", False)),
+                watch_duration=int(data.get("watch_duration", 0)),
+                watch_interval=int(data.get("watch_interval", 0)),
+                rollback_needed=bool(data.get("rollback_needed", False)),
+                rollback_reason=str(data.get("rollback_reason", "")),
+            )
+
+        # Fallback: JSON 解析失败时退回关键词匹配（兼容旧 prompt）
+        import re
         upper = response.upper()
 
-        # 判断结果
         if "SUCCESS" in upper and "FAILED" not in upper:
             result_str = "SUCCESS"
         elif "FAILED" in upper:
@@ -736,37 +754,31 @@ class PipelineMixin:
         else:
             result_str = "UNCERTAIN"
 
-        # 提取 CONTINUE_WATCH
         continue_watch = False
         cw_match = re.search(r'CONTINUE_WATCH:\s*(YES|NO)', upper)
         if cw_match and cw_match.group(1) == "YES":
             continue_watch = True
 
-        # 提取 WATCH_DURATION
         watch_duration = 0
         wd_match = re.search(r'WATCH_DURATION:\s*(\d+)', upper)
         if wd_match:
             watch_duration = int(wd_match.group(1))
 
-        # 提取 WATCH_INTERVAL（可选）
         watch_interval = 0
         wi_match = re.search(r'WATCH_INTERVAL:\s*(\d+)', upper)
         if wi_match:
             watch_interval = int(wi_match.group(1))
 
-        # 提取 EVIDENCE
         evidence = ""
         ev_match = re.search(r'EVIDENCE:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
         if ev_match:
             evidence = ev_match.group(1).strip()
 
-        # 提取 ROLLBACK_NEEDED
         rollback_needed = False
         rb_match = re.search(r'ROLLBACK_NEEDED:\s*(YES|NO)', upper)
         if rb_match and rb_match.group(1) == "YES":
             rollback_needed = True
 
-        # 提取 ROLLBACK_REASON
         rollback_reason = ""
         rbr_match = re.search(r'ROLLBACK_REASON:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
         if rbr_match:

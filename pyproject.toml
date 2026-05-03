@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ops-agent"
-version = "2.0.0"
+version = "2.2.3"
 description = "OpsAgent — 数字运维员工，AI 驱动的自主运维 Agent"
 readme = "README.md"
 license = {text = "MIT"}
