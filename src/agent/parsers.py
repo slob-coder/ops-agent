@@ -275,7 +275,19 @@ class ParsersMixin:
         verify = []
         for s in data.get("verify_steps", []):
             if isinstance(s, dict) and s.get("command"):
-                verify.append({"command": s["command"], "expect": s.get("expect", "")})
+                step = {
+                    "command": s["command"],
+                    "expect": s.get("expect", ""),
+                }
+                # 验证策略字段（可选）
+                if "delay_seconds" in s:
+                    step["delay_seconds"] = int(s["delay_seconds"])
+                if s.get("watch"):
+                    step["watch"] = True
+                    step["watch_duration"] = int(s.get("watch_duration", 300))
+                    step["watch_interval"] = int(s.get("watch_interval", 60))
+                    step["watch_converge"] = int(s.get("watch_converge", 2))
+                verify.append(step)
             elif isinstance(s, str) and s.strip():
                 verify.append({"command": s.strip(), "expect": ""})
 

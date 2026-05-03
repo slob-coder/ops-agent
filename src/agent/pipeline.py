@@ -513,11 +513,36 @@ class PipelineMixin:
         return "\n\n".join(results)
 
     def _verify_with_retry(self, plan, before_state: str,
-                           max_retries: int = 3, interval: int = 5) -> bool:
-        """验证修复效果 — 支持多次重试"""
+                           max_retries: int = 0, interval: int = 0) -> bool:
+        """验证修复效果 — 兼容旧接口，内部委托给 _verify_with_strategy"""
+        result = self._verify_with_strategy(plan, before_state)
+        return result.passed
+
+    def _verify_with_strategy(self, plan, before_state: str) -> "VerifyResult":
+        """验证修复效果 — 支持即时验证 + 连续观察
+
+        Phase 1: 即时验证（支持 delay_seconds + 重试）
+        Phase 2: 连续观察（如果 plan 或 verify prompt 要求）
+        """
+        from src.safety.trust import VerifyResult
+
+        cfg = self.limits.config
+        max_retries = cfg.verify_max_retries
+        interval = cfg.verify_default_interval
+
+        # ── Phase 1: 即时验证 ──
+        # 执行有 delay_seconds 的步骤前先等待
+        max_delay = max(
+            (s.get("delay_seconds", 0) for s in plan.verify_steps),
+            default=0,
+        )
+        if max_delay > 0:
+            self.chat.progress(f"等待 {max_delay}s 后验证（服务启动中...）")
+            self._interruptible_sleep(max_delay)
+
+        result = VerifyResult(result="UNCERTAIN")
         for attempt in range(1, max_retries + 1):
             self.chat.progress(f"验证中... (第 {attempt}/{max_retries} 次)")
-            self._interruptible_sleep(interval)
 
             after_state = self._targeted_observe(plan)
 
@@ -529,25 +554,233 @@ class PipelineMixin:
                 verification_criteria=plan.verification,
             )
             response = self._ask_llm(prompt, phase="VERIFY")
-            passed = "SUCCESS" in response.upper() and "FAILED" not in response.upper()
+            result = self._parse_verify_response(response)
 
             self.chat.trace(
                 "VERIFY",
-                f"attempt={attempt} result={'PASS' if passed else 'FAIL'}\n{response[:self.ctx_limits.verify_response_trace_chars]}",
+                f"attempt={attempt} result={result.result} "
+                f"watch={result.continue_watch} watch_duration={result.watch_duration}\n"
+                f"{response[:self.ctx_limits.verify_response_trace_chars]}",
             )
 
-            if passed:
-                return True
+            if result.passed:
+                break
 
-            if attempt < max_retries:
+            if result.failed and attempt < max_retries:
                 self.chat.progress(f"验证未通过，{interval}s 后重试...")
                 if self.current_incident:
                     self.notebook.append_to_incident(
                         self.current_incident,
                         f"\n### 验证重试 {attempt}/{max_retries}: 未通过\n",
                     )
+                self._interruptible_sleep(interval)
 
-        return False
+        # ── Phase 2: 连续观察 ──
+        # 触发条件：plan 中有 watch 步骤，或 verify prompt 建议继续观察
+        needs_watch = plan.has_watch_steps or result.needs_watch
+        if needs_watch and not result.failed:
+            # 确定观察参数
+            if plan.has_watch_steps:
+                # 优先用 plan 中声明的参数
+                watch_step = next(s for s in plan.verify_steps if s.get("watch"))
+                watch_duration = min(
+                    watch_step.get("watch_duration", 300),
+                    cfg.watch_max_duration,
+                )
+                watch_interval = watch_step.get("watch_interval", cfg.watch_default_interval)
+                watch_converge = watch_step.get("watch_converge", cfg.watch_required_consecutive)
+            else:
+                # 用 verify prompt 的建议
+                watch_duration = min(
+                    result.watch_duration or 300,
+                    cfg.watch_max_duration,
+                )
+                watch_interval = result.watch_interval or min(
+                    cfg.watch_default_interval,
+                    max(5, watch_duration // 5),  # 自动调整间隔：至少5次采样
+                )
+                watch_converge = cfg.watch_required_consecutive
+
+            result = self._watch_verify(
+                plan, watch_duration, watch_interval, watch_converge,
+            )
+
+        return result
+
+    def _watch_verify(self, plan, duration: int, interval: int,
+                      required_consecutive: int) -> "VerifyResult":
+        """连续观察：在 duration 秒内每隔 interval 秒采样一次
+
+        收敛条件：连续 required_consecutive 次验证通过
+        恶化检测：如果状态比修复前更差，立即返回 FAILED
+        """
+        import math
+        from src.safety.trust import VerifyResult
+
+        cfg = self.limits.config
+        # 限制最大观察时长
+        duration = min(duration, cfg.watch_max_duration)
+        # 限制最短采样间隔（避免过于密集）
+        interval = max(interval, 5)
+
+        checks = math.ceil(duration / interval)
+        consecutive_pass = 0
+        watch_log = []
+
+        self.chat.progress(f"进入连续观察: {duration}s, 每{interval}s采样, 需连续{required_consecutive}次通过")
+
+        for i in range(1, checks + 1):
+            if i > 1:  # 第一次不需要等待
+                self._interruptible_sleep(interval)
+
+            after_state = self._targeted_observe(plan)
+            # 用 expect 做轻量检查（不走完整 LLM）
+            passed = self._quick_verify_check(plan, after_state)
+            watch_log.append(f"  采样 {i}/{checks}: {'✅' if passed else '❌'}")
+
+            if passed:
+                consecutive_pass += 1
+                if consecutive_pass >= required_consecutive:
+                    self.chat.progress(
+                        f"连续观察收敛: 连续{consecutive_pass}次通过"
+                    )
+                    evidence = "\n".join(watch_log)
+                    if self.current_incident:
+                        self.notebook.append_to_incident(
+                            self.current_incident,
+                            f"\n## 连续观察通过\n{evidence}\n",
+                        )
+                    return VerifyResult(
+                        result="SUCCESS",
+                        evidence=f"连续观察{duration}s，连续{consecutive_pass}次验证通过",
+                    )
+            else:
+                consecutive_pass = 0
+                # 检测是否恶化（比之前状态明显更差）
+                if self._is_degrading(after_state):
+                    self.chat.say("⚠️ 连续观察期间状态恶化！", "warning")
+                    if self.current_incident:
+                        self.notebook.append_to_incident(
+                            self.current_incident,
+                            f"\n## 连续观察: 状态恶化\n采样 {i}/{checks}\n",
+                        )
+                    return VerifyResult(
+                        result="FAILED",
+                        evidence=f"连续观察期间状态恶化 (采样 {i}/{checks})",
+                        rollback_needed=True,
+                        rollback_reason="观察期间状态恶化",
+                    )
+
+        # 超时未收敛
+        evidence = "\n".join(watch_log)
+        if self.current_incident:
+            self.notebook.append_to_incident(
+                self.current_incident,
+                f"\n## 连续观察超时\n观察{duration}s未收敛\n{evidence}\n",
+            )
+        return VerifyResult(
+            result="UNCERTAIN",
+            evidence=f"连续观察{duration}s未收敛 ({checks}次采样)",
+        )
+
+    def _quick_verify_check(self, plan, after_state: str) -> bool:
+        """轻量验证：用 verify_steps 的 expect 做字符串匹配
+
+        不走 LLM，直接检查命令输出是否包含期望字符串。
+        所有 expect 都匹配才算通过，没有 expect 则默认通过。
+        """
+        expects = [s.get("expect", "") for s in plan.verify_steps if s.get("expect")]
+        if not expects:
+            # 没有 expect，默认通过（交由 LLM 判断）
+            return True
+
+        for exp in expects:
+            if exp and str(exp).lower() not in after_state.lower():
+                return False
+        return True
+
+    def _is_degrading(self, after_state: str) -> bool:
+        """检测状态是否恶化
+
+        简单启发式：检查是否出现明显的恶化信号。
+        不做 LLM 调用，纯字符串匹配。
+        """
+        degradation_signals = [
+            "connection refused",
+            "no route to host",
+            "kernel panic",
+            "out of memory",
+            "oom-killer",
+            "segmentation fault",
+            "core dumped",
+            "critical error",
+            "fatal error",
+            "service failed",
+            "failed with result",
+        ]
+        state_lower = after_state.lower()
+        return any(sig in state_lower for sig in degradation_signals)
+
+    def _parse_verify_response(self, response: str) -> "VerifyResult":
+        """解析 verify prompt 的 LLM 输出为 VerifyResult"""
+        from src.safety.trust import VerifyResult
+        import re
+
+        upper = response.upper()
+
+        # 判断结果
+        if "SUCCESS" in upper and "FAILED" not in upper:
+            result_str = "SUCCESS"
+        elif "FAILED" in upper:
+            result_str = "FAILED"
+        else:
+            result_str = "UNCERTAIN"
+
+        # 提取 CONTINUE_WATCH
+        continue_watch = False
+        cw_match = re.search(r'CONTINUE_WATCH:\s*(YES|NO)', upper)
+        if cw_match and cw_match.group(1) == "YES":
+            continue_watch = True
+
+        # 提取 WATCH_DURATION
+        watch_duration = 0
+        wd_match = re.search(r'WATCH_DURATION:\s*(\d+)', upper)
+        if wd_match:
+            watch_duration = int(wd_match.group(1))
+
+        # 提取 WATCH_INTERVAL（可选）
+        watch_interval = 0
+        wi_match = re.search(r'WATCH_INTERVAL:\s*(\d+)', upper)
+        if wi_match:
+            watch_interval = int(wi_match.group(1))
+
+        # 提取 EVIDENCE
+        evidence = ""
+        ev_match = re.search(r'EVIDENCE:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
+        if ev_match:
+            evidence = ev_match.group(1).strip()
+
+        # 提取 ROLLBACK_NEEDED
+        rollback_needed = False
+        rb_match = re.search(r'ROLLBACK_NEEDED:\s*(YES|NO)', upper)
+        if rb_match and rb_match.group(1) == "YES":
+            rollback_needed = True
+
+        # 提取 ROLLBACK_REASON
+        rollback_reason = ""
+        rbr_match = re.search(r'ROLLBACK_REASON:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
+        if rbr_match:
+            rollback_reason = rbr_match.group(1).strip()
+
+        return VerifyResult(
+            result=result_str,
+            evidence=evidence,
+            continue_watch=continue_watch,
+            watch_duration=watch_duration,
+            watch_interval=watch_interval,
+            rollback_needed=rollback_needed,
+            rollback_reason=rollback_reason,
+        )
 
     def _reflect(self):
         """复盘总结"""

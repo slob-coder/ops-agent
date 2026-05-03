@@ -75,6 +75,13 @@ class LimitsConfig:
     # Plan 阶段 COLLECT_MORE 循环上限
     max_plan_rounds: int = 3
 
+    # ── 验证策略配置 ──
+    verify_max_retries: int = 3          # 即时验证最大重试次数
+    verify_default_interval: int = 5     # 即时验证重试间隔（秒）
+    watch_required_consecutive: int = 2  # 连续观察收敛需要的连续通过次数
+    watch_default_interval: int = 60     # 连续观察采样间隔（秒）
+    watch_max_duration: int = 900        # 单次连续观察最大时长（秒）
+
     # 总开关
     enabled: bool = True
 

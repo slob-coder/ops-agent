@@ -16,6 +16,36 @@ DENY = "deny"                    # 硬拒绝
 
 
 @dataclass
+class VerifyResult:
+    """验证结果 — 结构化表示 verify prompt 的输出
+
+    三种结果：
+    - SUCCESS: 验证通过
+    - FAILED: 验证失败
+    - UNCERTAIN: 无法确定，需要继续观察
+    """
+    result: str = "UNCERTAIN"        # SUCCESS | FAILED | UNCERTAIN
+    evidence: str = ""               # 判断依据
+    continue_watch: bool = False     # 是否需要继续观察
+    watch_duration: int = 0          # 建议观察秒数
+    watch_interval: int = 60         # 建议采样间隔秒数
+    rollback_needed: bool = False    # 是否需要回滚
+    rollback_reason: str = ""        # 回滚理由
+
+    @property
+    def passed(self) -> bool:
+        return self.result == "SUCCESS"
+
+    @property
+    def failed(self) -> bool:
+        return self.result == "FAILED"
+
+    @property
+    def needs_watch(self) -> bool:
+        return self.continue_watch
+
+
+@dataclass
 class ActionPlan:
     """一个待执行的动作方案（结构化版本）
 
@@ -24,7 +54,12 @@ class ActionPlan:
 
     steps:          [{"command": "...", "purpose": "...", "wait_seconds": 0}]
     rollback_steps: [{"command": "...", "purpose": "..."}]
-    verify_steps:   [{"command": "...", "expect": "..."}]
+    verify_steps:   [{"command": "...", "expect": "...",
+                       "delay_seconds": 0,          # 执行前等待时间
+                       "watch": false,              # 是否需要连续观察
+                       "watch_duration": 0,         # 连续观察总时长（秒）
+                       "watch_interval": 60,        # 观察采样间隔（秒）
+                       "watch_converge": 2}]        # 连续通过次数算收敛
     """
     steps: list = field(default_factory=list)
     rollback_steps: list = field(default_factory=list)
@@ -50,6 +85,17 @@ class ActionPlan:
         """所有回滚命令拼接"""
         return "\n".join(s.get("command", "") for s in self.rollback_steps if s.get("command"))
 
+    @property
+    def has_watch_steps(self) -> bool:
+        """是否有需要连续观察的验证步骤"""
+        return any(s.get("watch") for s in self.verify_steps)
+
+    @property
+    def max_watch_duration(self) -> int:
+        """所有 watch 步骤中最长的观察时长"""
+        durations = [s.get("watch_duration", 0) for s in self.verify_steps if s.get("watch")]
+        return max(durations) if durations else 0
+
     def to_markdown(self) -> str:
         lines = [f"**理由**: {self.reason}"]
         lines.append("**修复步骤**:")
@@ -65,7 +111,16 @@ class ActionPlan:
         if self.verify_steps:
             lines.append("**验证方法**:")
             for s in self.verify_steps:
-                lines.append(f"  - `{s.get('command', '')}` (期望: {s.get('expect', '成功')})")
+                delay = s.get("delay_seconds", 0)
+                delay_hint = f" (等待{delay}s后)" if delay else ""
+                watch = s.get("watch", False)
+                watch_hint = ""
+                if watch:
+                    wd = s.get("watch_duration", 0)
+                    wi = s.get("watch_interval", 60)
+                    wc = s.get("watch_converge", 2)
+                    watch_hint = f" [连续观察: {wd}s, 每{wi}s采样, 连续{wc}次通过]"
+                lines.append(f"  - `{s.get('command', '')}`{delay_hint}{watch_hint} (期望: {s.get('expect', '成功')})")
         lines.append(f"**信任等级**: L{self.trust_level}")
         return "\n".join(lines)
 

@@ -810,13 +810,11 @@ class OpsAgent(
                 else:
                     state = "VERIFY"
 
-            # ── VERIFY（多次重试）──
+            # ── VERIFY（即时验证 + 连续观察）──
             elif state == "VERIFY":
-                verified = self._verify_with_retry(
-                    plan, before_state, max_retries=3, interval=5
-                )
+                verify_result = self._verify_with_strategy(plan, before_state)
 
-                if verified:
+                if verify_result.passed:
                     fix_verified = True
                     self.chat.say("✅ 验证通过，问题已修复！", "success")
                     self.notebook.append_to_incident(
@@ -826,6 +824,17 @@ class OpsAgent(
                         self.current_target.name, self.current_issue
                     )
                     state = "REFLECT"
+                elif verify_result.result == "UNCERTAIN":
+                    # 观察超时但未恶化 → 记录为"部分修复"，进入 REFLECT
+                    self.chat.say(
+                        "⚠️ 验证不确定：观察期内未收敛但未恶化，记录为部分修复",
+                        "warning",
+                    )
+                    self.notebook.append_to_incident(
+                        self.current_incident,
+                        f"\n## 验证不确定 (尝试 {fix_attempts})\n{verify_result.evidence}\n",
+                    )
+                    state = "REFLECT"
                 else:
                     self.chat.say(
                         f"验证未通过 (尝试 {fix_attempts}/{max_fix_attempts})",
@@ -833,7 +842,7 @@ class OpsAgent(
                     )
                     self.notebook.append_to_incident(
                         self.current_incident,
-                        f"\n## 验证未通过 (尝试 {fix_attempts})\n",
+                        f"\n## 验证未通过 (尝试 {fix_attempts})\n{verify_result.evidence}\n",
                     )
                     self.limits.record_failure()
 
