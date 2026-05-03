@@ -136,7 +136,10 @@ class PromptsMixin:
         2. 带上 user prompt（具体任务指令）
         3. 流式生成时自动检查人类中断（可被随时打断）
         4. 如果指定了 phase，自动将 prompt/response 写入 trace 文件
+        5. 解析前校验 response，校验失败时记录结构化日志
         """
+        import time as _time
+
         # 构建 system prompt
         system = self._build_system_prompt()
 
@@ -159,10 +162,14 @@ class PromptsMixin:
         self.chat.llm_log(label)
 
         check = self._interrupt_check if allow_interrupt else None
+
+        # 计时
+        _start = _time.monotonic()
         response = self.llm.ask(
             prompt, system=system, max_tokens=max_tokens,
             interrupt_check=check,
         )
+        _duration_ms = int((_time.monotonic() - _start) * 1000)
 
         # trace: 记录响应
         if phase:
@@ -170,6 +177,29 @@ class PromptsMixin:
                 f"{phase} [RESPONSE]",
                 f"```\n{response}\n```",
             )
+
+        # 校验 response（解析前）
+        if phase and hasattr(self, 'llm_validator') and self.llm_validator:
+            vresult = self.llm_validator.validate(
+                phase=phase, response=response,
+                provider=getattr(self.llm, 'provider', ''),
+                model=getattr(self.llm, 'model', ''),
+                prompt_chars=len(prompt),
+                duration_ms=_duration_ms,
+                incident=getattr(self, 'current_incident', '') or '',
+            )
+            if not vresult.passed:
+                self.llm_validator.log_error(
+                    result=vresult,
+                    provider=getattr(self.llm, 'provider', ''),
+                    model=getattr(self.llm, 'model', ''),
+                    prompt_chars=len(prompt),
+                    response_chars=len(response) if response else 0,
+                    duration_ms=_duration_ms,
+                    incident=getattr(self, 'current_incident', '') or '',
+                    request_snippet=prompt,
+                    response_snippet=response or '',
+                )
 
         return response
 

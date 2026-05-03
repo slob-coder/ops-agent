@@ -177,6 +177,12 @@ class OpsAgent(
             logger.warning(f"audit init failed: {e}")
             self.audit = None
         try:
+            from src.reliability.llm_validator import LLMValidator
+            self.llm_validator = LLMValidator(str(Path(notebook_path) / "llm_errors"))
+        except Exception as e:
+            logger.warning(f"llm_validator init failed: {e}")
+            self.llm_validator = None
+        try:
             from src.infra.notifier import NotifierConfig, make_notifier, PolicyNotifier
             ncfg = NotifierConfig.from_yaml(
                 str(Path(notebook_path) / "config" / "notifier.yaml")
