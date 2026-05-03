@@ -23,15 +23,12 @@ class PipelineMixin:
     def _observe(self) -> str:
         """感知：让 LLM 决定看什么，然后执行"""
         self.chat.progress("分析观察目标...")
-        system_map = self.notebook.read("system-map.md")
         watchlist = self.notebook.read("config/watchlist.md")
         recent = self._recent_incidents_summary()
 
         prompt = self._fill_prompt(
             "observe",
-            system_map=system_map,
             watchlist=watchlist,
-            mode=self.mode,
             current_issue=self.current_issue,
             recent_incidents=recent,
         )
@@ -83,13 +80,11 @@ class PipelineMixin:
     def _assess(self, observations: str) -> dict:
         """判断观察结果是否正常"""
         self.chat.progress("评估观察结果...")
-        system_map = self.notebook.read("system-map.md")
         recent = self._recent_incidents_summary()
         silences = self.notebook.read("incidents/silence.yml")
 
         prompt = self._fill_prompt(
             "assess",
-            system_map=system_map,
             observations=observations,
             recent_incidents=recent,
             silences=silences or "# 暂无静默规则",
@@ -134,7 +129,6 @@ class PipelineMixin:
     def _diagnose(self, assessment: dict, observations: str) -> dict:
         """深度诊断"""
         self.chat.progress("诊断中...")
-        system_map = self.notebook.read("system-map.md")
         summary = assessment.get("summary", "")
 
         # Sprint 2: 异常栈反向定位源码
@@ -222,7 +216,6 @@ class PipelineMixin:
             observations=observations[:max_obs],
             relevant_playbooks=playbook_content or "（无匹配的 Playbook）",
             similar_incidents=incidents_content or "（无历史记录）",
-            system_map=system_map,
             source_locations=source_text,
             project_map=project_map or "（无项目地图）",
         )
@@ -325,7 +318,6 @@ class PipelineMixin:
 
         for plan_round in range(1, max_plan_rounds + 1):
             self.chat.progress(f"制定修复方案... (第{plan_round}轮)")
-            permissions = self.notebook.read("config/permissions.md")
 
             # 找匹配的 Playbook
             hypothesis = diagnosis.get("hypothesis", "")
@@ -355,7 +347,6 @@ class PipelineMixin:
                 "plan",
                 diagnosis=str(diagnosis),
                 matched_playbook=playbook or "（无匹配的 Playbook）",
-                permissions=permissions,
                 build_deploy_context=build_deploy_context,
                 project_map=project_map or "（无项目地图）",
                 source_locations=source_text,

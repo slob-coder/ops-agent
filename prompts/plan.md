@@ -6,9 +6,6 @@
 ## 匹配的 Playbook
 {matched_playbook}
 
-## 授权规则
-{permissions}
-
 ## 项目地图（AGENTS.md）
 {project_map}
 
