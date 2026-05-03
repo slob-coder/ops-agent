@@ -73,7 +73,7 @@ class LimitsConfig:
     max_unresolved_frames: int = 5
 
     # Plan 阶段 COLLECT_MORE 循环上限
-    max_plan_rounds: int = 3
+    max_plan_rounds: int = 8
 
     # ── 验证策略配置 ──
     verify_max_retries: int = 3          # 即时验证最大重试次数
