@@ -98,6 +98,10 @@ class PipelineMixin:
 
         返回 (LocateResult | None, ParsedTrace | None)。
         任何失败都返回 (None, None),不影响诊断流程继续。
+
+        定位策略（按优先级）:
+        1. 异常栈反向定位（原有逻辑）
+        2. 关键词源码搜索 fallback（stack trace 定位失败时）
         """
         try:
             from src.repair.stack_parser import StackTraceParser
@@ -108,23 +112,211 @@ class PipelineMixin:
 
         if not text or not self.current_target:
             return None, None
+
+        # 策略 1: 异常栈反向定位
+        parsed = None
         try:
             parsed = StackTraceParser().extract_and_parse(text)
         except Exception as e:
             logger.debug(f"stack parse failed: {e}")
-            return None, None
-        if not parsed.frames:
-            return None, None
+
+        if parsed and parsed.frames:
+            try:
+                repos = self.current_target.get_source_repos()
+            except Exception:
+                repos = []
+            try:
+                result = SourceLocator(repos).locate(parsed.frames)
+                if result and result.locations:
+                    return result, parsed
+            except Exception as e:
+                logger.debug(f"source locate failed: {e}")
+                return None, parsed
+            # stack trace 解析成功但定位失败，返回 parsed 供上层使用
+            return None, parsed
+
+        # 策略 2: 关键词源码搜索 fallback
+        keywords = self._extract_error_keywords(text)
+        if keywords:
+            logger.debug(f"stack trace 定位失败，尝试关键词搜索: {keywords}")
+            keyword_result = self._search_source_by_keywords(keywords)
+            if keyword_result:
+                self.chat.trace("DIAGNOSE", f"关键词搜索定位到 {len(keyword_result.locations)} 个源码位置: {keywords}")
+                return keyword_result, None
+
+        return None, None
+
+    # ─── 关键词提取与源码搜索 fallback ───
+
+    # 常见错误信息中需要跳过的通用词
+    _KEYWORD_STOPWORDS = frozenset({
+        "error", "failed", "exception", "does not exist", "not found",
+        "invalid", "missing", "denied", "refused", "timeout", "unavailable",
+        "null", "none", "undefined", "table", "column", "database", "schema",
+        "index", "constraint", "key", "value", "type", "function", "module",
+        "the", "a", "an", "is", "are", "was", "were", "has", "have", "had",
+        "no", "not", "or", "and", "in", "on", "at", "to", "for", "of", "with",
+    })
+
+    def _extract_error_keywords(self, text: str) -> list[str]:
+        """从错误信息中提取可用于源码搜索的关键标识词
+
+        策略:
+        1. 提取引号内的标识符（如 "account_id" does not exist → account_id）
+        2. 提取蛇形命名标识符（含 _ 的长词，如 platform_account_id）
+        3. 提取驼峰命名标识符（含大小写混合的长词，如 NullPointerException）
+        过滤掉通用停用词和短词（< 3 字符）。
+        """
+        import re
+
+        if not text:
+            return []
+
+        keywords = []
+
+        # 1. 引号内的内容
+        for m in re.finditer(r'["\x27`](\w+)["\x27`]', text):
+            word = m.group(1)
+            if len(word) >= 3 and word.lower() not in self._KEYWORD_STOPWORDS:
+                keywords.append(word)
+
+        # 2. 蛇形命名（至少含一个下划线，长度 >= 4）
+        for m in re.finditer(r'\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b', text):
+            word = m.group(1)
+            if word.lower() not in self._KEYWORD_STOPWORDS:
+                keywords.append(word)
+
+        # 3. 驼峰命名（大小写混合，长度 >= 5）
+        for m in re.finditer(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', text):
+            word = m.group(1)
+            if word not in self._KEYWORD_STOPWORDS:
+                keywords.append(word)
+
+        # 去重并保持顺序，最多 5 个关键词
+        seen = set()
+        unique = []
+        for k in keywords:
+            kl = k.lower()
+            if kl not in seen:
+                seen.add(kl)
+                unique.append(k)
+        return unique[:5]
+
+    def _search_source_by_keywords(self, keywords: list[str]) -> "LocateResult | None":
+        """在 source_repos 中用关键词搜索匹配的源码文件
+
+        返回 LocateResult（复用 SourceLocator 的数据结构），
+        定位结果不包含行号精确信息（frame.line 设为 0），
+        但包含文件上下文代码片段。
+        """
+        from src.repair.source_locator import LocateResult, SourceLocation
+        from src.repair.stack_parser import StackFrame
+
+        if not self.current_target or not keywords:
+            return None
+
         try:
             repos = self.current_target.get_source_repos()
         except Exception:
-            repos = []
-        try:
-            result = SourceLocator(repos).locate(parsed.frames)
-        except Exception as e:
-            logger.debug(f"source locate failed: {e}")
-            return None, parsed
-        return result, parsed
+            return None
+
+        if not repos:
+            return None
+
+        # 代码文件扩展名
+        CODE_EXTENSIONS = {
+            ".py", ".go", ".java", ".js", ".ts", ".jsx", ".tsx",
+            ".rs", ".rb", ".php", ".cs", ".c", ".cpp", ".h", ".hpp",
+            ".sql", ".yaml", ".yml", ".toml", ".json",
+        }
+
+        locations = []
+        max_files = 5
+        context_lines = 3  # 匹配行前后各 3 行
+        max_render_chars = 2000  # 单个 location 的渲染上限
+
+        for repo in repos:
+            if not repo.path or not os.path.isdir(repo.path):
+                continue
+            if len(locations) >= max_files:
+                break
+
+            # 用 grep 在仓库中搜索关键词
+            # 构造搜索模式：任意关键词匹配
+            pattern = "|".join(keywords)
+            try:
+                result = self._run_cmd(
+                    f"grep -rn -E '{pattern}' --include='*.go' --include='*.py' "
+                    f"--include='*.java' --include='*.js' --include='*.ts' "
+                    f"--include='*.sql' --include='*.yaml' --include='*.yml' "
+                    f"{repo.path} 2>/dev/null | head -30",
+                    timeout=15,
+                )
+                grep_output = str(result)
+            except Exception as e:
+                logger.debug(f"keyword grep failed for repo {repo.name}: {e}")
+                continue
+
+            if not grep_output or grep_output.strip() == "":
+                continue
+
+            # 解析 grep 输出，按文件分组
+            file_matches: dict[str, list[tuple[int, str]]] = {}
+            for line in grep_output.splitlines()[:30]:
+                # 格式: /path/to/file.go:42:content
+                m = re.match(r'(.+?):(\d+):(.*)', line)
+                if m:
+                    fpath, lineno, content = m.group(1), int(m.group(2)), m.group(3)
+                    if fpath not in file_matches:
+                        file_matches[fpath] = []
+                    file_matches[fpath].append((lineno, content))
+
+            # 为每个匹配文件构建 SourceLocation
+            for fpath, matches in file_matches.items():
+                if len(locations) >= max_files:
+                    break
+
+                # 读取文件上下文（取第一个匹配行附近）
+                first_match_line = matches[0][0]
+                try:
+                    with open(fpath, "r", errors="replace") as f:
+                        all_lines = f.readlines()
+                except Exception:
+                    continue
+
+                # 上下文范围
+                start = max(0, first_match_line - context_lines - 1)
+                end = min(len(all_lines), first_match_line + context_lines)
+
+                before_lines = all_lines[start:first_match_line - 1]
+                target_line = all_lines[first_match_line - 1] if first_match_line <= len(all_lines) else ""
+                after_lines = all_lines[first_match_line:end]
+
+                # 汇总所有匹配行号（供 LLM 快速定位）
+                match_summary = ", ".join(f"L{ln}" for ln, _ in matches)
+
+                frame = StackFrame(
+                    file=os.path.relpath(fpath, repo.path),
+                    line=first_match_line,
+                    function="",
+                    language=repo.language or "",
+                )
+                loc = SourceLocation(
+                    frame=frame,
+                    local_file=fpath,
+                    repo_name=repo.name,
+                    context_before="".join(before_lines).rstrip("\n"),
+                    target_line=target_line.rstrip(),
+                    context_after="".join(after_lines).rstrip("\n"),
+                    function_definition=f"(关键词搜索定位: {match_summary})",
+                    start_line=start + 1,
+                )
+                locations.append(loc)
+
+        if not locations:
+            return None
+
+        return LocateResult(locations=locations)
 
     def _diagnose(self, assessment: dict, observations: str) -> dict:
         """深度诊断"""
@@ -315,6 +507,7 @@ class PipelineMixin:
         """制定修复方案（支持 COLLECT_MORE 多轮收集上下文）"""
         max_plan_rounds = self.limits.config.max_plan_rounds
         gap_results = ""
+        plan_history: list[dict] = []  # 进展检测：记录每轮的 next_action + gaps 摘要
 
         for plan_round in range(1, max_plan_rounds + 1):
             self.chat.progress(f"制定修复方案... (第{plan_round}轮)")
@@ -343,6 +536,16 @@ class PipelineMixin:
             if hasattr(self, "_last_locate_result") and self._last_locate_result and self._last_locate_result.locations:
                 source_text = self._last_locate_result.render()
 
+            # 修复点 3: source_locations 为空时，用诊断关键词搜索源码作为 fallback
+            code_search_text = "（无）"
+            if source_text == "（无）":
+                code_search_text = self._search_source_snippets_from_diagnosis(diagnosis)
+                if code_search_text != "（无）":
+                    self.chat.trace("PLAN", f"源码定位为空，关键词搜索 fallback 找到相关代码")
+
+            # 修复点 4: 构造已确认事实清单，防止 LLM 反复 COLLECT_MORE 确认已知信息
+            confirmed_facts = self._build_confirmed_facts(diagnosis, code_search_text)
+
             prompt = self._fill_prompt(
                 "plan",
                 diagnosis=str(diagnosis),
@@ -350,6 +553,8 @@ class PipelineMixin:
                 build_deploy_context=build_deploy_context,
                 project_map=project_map or "（无项目地图）",
                 source_locations=source_text,
+                code_search_results=code_search_text,
+                confirmed_facts=confirmed_facts,
                 gap_results=gap_results or "（无）",
             )
 
@@ -365,6 +570,28 @@ class PipelineMixin:
                 plan = self._parse_plan(response)
                 if plan is None:
                     continue
+
+            # 修复点 5: 进展检测——连续 COLLECT_MORE 且 gaps 描述相似 → 强制出方案
+            plan_history.append({
+                "action": plan.next_action,
+                "gaps_desc": [g.get("description", "")[:50] for g in (plan.gaps or [])],
+            })
+            if self._detect_plan_stagnation(plan_history):
+                self.chat.say("⚠️ Plan 阶段连续收集相似信息，强制制定方案", "warning")
+                # 在 prompt 中追加强制指令，重新调用 LLM
+                force_prompt = prompt + (
+                    "\n\n[重要] 你已经收集了足够的上下文信息，不要再请求更多信息。"
+                    "基于已有信息直接制定修复方案（next_action=READY）。"
+                    "如果确实无法修复，设 next_action=ESCALATE。"
+                )
+                response = self._ask_llm(force_prompt, phase=f"PLAN_R{plan_round}_FORCE")
+                plan = self._parse_plan(response)
+                if plan is None:
+                    # 强制也失败，最后一次机会
+                    continue
+                # 如果 LLM 仍然 COLLECT_MORE，强制转为 ESCALATE
+                if plan.next_action == "COLLECT_MORE":
+                    plan.next_action = "ESCALATE"
 
             # COLLECT_MORE: 执行 gap 命令，收集上下文后重新规划
             if plan.next_action == "COLLECT_MORE" and plan.gaps and plan_round < max_plan_rounds:
@@ -403,6 +630,116 @@ class PipelineMixin:
                 "action",
             )
         return plan
+
+    # ─── Plan 阶段辅助方法 ───
+
+    def _search_source_snippets_from_diagnosis(self, diagnosis: dict) -> str:
+        """修复点 3: 从诊断结论提取关键词，在 source_repos 中搜索相关代码
+
+        当 diagnose 阶段的源码定位失败时，plan 阶段的 fallback。
+        返回搜索结果文本，无结果时返回 "（无）"。
+        """
+        if not self.current_target:
+            return "（无）"
+
+        # 从诊断中提取搜索关键词
+        search_parts = []
+        for key in ("hypothesis", "facts"):
+            val = diagnosis.get(key, "")
+            if val:
+                search_parts.append(val)
+        # 也从 _last_error_text 提取
+        if hasattr(self, "_last_error_text") and self._last_error_text:
+            search_parts.append(self._last_error_text[:500])
+
+        combined_text = "\n".join(search_parts)
+        keywords = self._extract_error_keywords(combined_text)
+
+        if not keywords:
+            return "（无）"
+
+        # 复用 diagnose 阶段的关键词搜索
+        result = self._search_source_by_keywords(keywords)
+        if not result or not result.locations:
+            return "（无）"
+
+        # 渲染搜索结果，添加明确的 fallback 标记
+        parts = [f"（以下通过关键词搜索定位，关键词: {', '.join(keywords)}）"]
+        for loc in result.locations[:5]:
+            parts.append(loc.render(max_chars=1500))
+        rendered = "\n\n".join(parts)
+
+        # 限制总长度
+        if len(rendered) > 4000:
+            rendered = rendered[:4000] + "\n... (truncated)"
+
+        return rendered
+
+    def _build_confirmed_facts(self, diagnosis: dict, code_search_text: str) -> str:
+        """修复点 4: 从诊断结论和代码搜索结果中构造已确认事实清单
+
+        防止 LLM 在 COLLECT_MORE 中反复请求查看已确认的信息。
+        """
+        facts = []
+
+        # 诊断事实
+        diag_facts = diagnosis.get("facts", "")
+        if diag_facts:
+            facts.append(f"- 现象: {diag_facts}")
+
+        # 诊断结论
+        hypothesis = diagnosis.get("hypothesis", "")
+        if hypothesis:
+            facts.append(f"- 根因: {hypothesis}")
+
+        # 诊断类型和置信度
+        dtype = diagnosis.get("type", "")
+        conf = diagnosis.get("confidence", 0)
+        if dtype:
+            facts.append(f"- 类型: {dtype} (把握度 {conf}%)")
+
+        # 代码搜索找到的文件
+        if code_search_text != "（无）":
+            # 提取文件名
+            files = re.findall(r'### (\S+)', code_search_text)
+            if files:
+                facts.append(f"- 需修改的文件: {', '.join(files[:5])}")
+
+        return "\n".join(facts) if facts else "（无）"
+
+    def _detect_plan_stagnation(self, plan_history: list[dict]) -> bool:
+        """修复点 5: 检测 Plan 阶段是否在原地打转
+
+        判断条件: 连续 2 轮 COLLECT_MORE 且 gaps 描述有重叠。
+        """
+        if len(plan_history) < 2:
+            return False
+
+        last_two = plan_history[-2:]
+        if last_two[0]["action"] != "COLLECT_MORE" or last_two[1]["action"] != "COLLECT_MORE":
+            return False
+
+        # 检查 gaps 描述是否有重叠
+        gaps_a = set(desc.lower().strip() for desc in last_two[0]["gaps_desc"] if desc.strip())
+        gaps_b = set(desc.lower().strip() for desc in last_two[1]["gaps_desc"] if desc.strip())
+
+        if not gaps_a or not gaps_b:
+            return False
+
+        # 有任意重叠即判定为打转
+        overlap = gaps_a & gaps_b
+        if overlap:
+            logger.debug(f"Plan stagnation detected: overlapping gaps: {overlap}")
+            return True
+
+        # 模糊匹配：描述的前 20 字符相同也算重叠
+        prefixes_a = {d[:20] for d in gaps_a if len(d) >= 10}
+        prefixes_b = {d[:20] for d in gaps_b if len(d) >= 10}
+        if prefixes_a & prefixes_b:
+            logger.debug(f"Plan stagnation detected: overlapping gap prefixes")
+            return True
+
+        return False
 
     def _get_build_deploy_context(self) -> str:
         """提取当前目标的构建/部署配置（用于 plan prompt）"""
