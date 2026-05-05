@@ -606,6 +606,11 @@ ops-agent --readonly
 
 # 调试模式
 ops-agent --debug
+
+# 语言切换
+ops-agent --lang en            # 英文界面
+ops-agent --lang zh            # 中文界面（默认）
+OPS_AGENT_LANG=en ops-agent    # 通过环境变量切换
 ```
 
 **Docker**:

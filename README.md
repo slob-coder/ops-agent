@@ -108,10 +108,13 @@ LLM API Key 等凭据自动写入 `.env`，无需手动 export。
 **Step 3 — 启动**
 
 ```bash
-ops-agent                  # 用 init 生成的配置启动
+ops-agent                  # 用 init 生成的配置启动（默认中文）
+ops-agent --lang en        # 英文模式启动
 ops-agent --readonly       # 只读模式（只观察不动手）
 ops-agent check            # 校验配置是否完整
 ops-agent check --test-llm # 校验 + 测试 LLM 连通性
+
+语言切换优先级：`--lang` 参数 > `OPS_AGENT_LANG` 环境变量 > 配置文件 > 默认中文（zh）。
 ```
 
 **Step 4 — 和 Agent 对话**
