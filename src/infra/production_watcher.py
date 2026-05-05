@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from src.repair.stack_parser import StackTraceParser
+from src.i18n import t
 
 logger = logging.getLogger("ops-agent.production_watcher")
 
@@ -69,7 +70,7 @@ class ProductionWatcher:
         if not baseline_sig:
             return WatchResult(
                 outcome=WatchOutcome.NO_BASELINE,
-                detail="无法从原始异常提取 signature,无法做复发检测",
+                detail=t("notifier.no_baseline"),
             )
 
         start = self._now()
@@ -90,7 +91,7 @@ class ProductionWatcher:
                         outcome=WatchOutcome.OBSERVE_ERROR,
                         elapsed=self._now() - start,
                         checks=checks,
-                        detail=f"观察函数连续 3 次失败: {e}",
+                        detail=t("notifier.observe_failed", error=e),
                     )
                 self._sleep(interval)
                 continue
@@ -103,7 +104,7 @@ class ProductionWatcher:
                     outcome=WatchOutcome.FAILED_RECURRENCE,
                     elapsed=self._now() - start,
                     checks=checks,
-                    detail=f"检测到原异常复发: {cur_sig}",
+                    detail=t("notifier.anomaly_recurred", signature=cur_sig),
                     last_observation=observation[:get_context_limits().observe_output_chars],
                 )
 
@@ -113,6 +114,6 @@ class ProductionWatcher:
             outcome=WatchOutcome.OK,
             elapsed=self._now() - start,
             checks=checks,
-            detail=f"观察 {duration}s,{checks} 次检查,无复发",
+            detail=t("notifier.observation_done", duration=duration, checks=checks),
             last_observation=last_obs[:get_context_limits().observe_output_chars],
         )

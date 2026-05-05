@@ -13,6 +13,7 @@ from typing import Optional
 
 from src.infra.targets import SourceRepo
 from src.context_limits import get_context_limits
+from src.i18n import t
 
 logger = logging.getLogger("ops-agent.agents_md")
 
@@ -92,11 +93,11 @@ class AgentsMdMixin:
                     self._generate_agents_md(repo)
                 except Exception as e:
                     logger.warning(f"Failed to generate AGENTS.md for {repo.name}: {e}")
-                    self.chat.say(f"⚠️ 为 {repo.name} 生成 AGENTS.md 失败: {e}", "warning")
+                    self.chat.say(t("agents_md.generate_failed", name=repo.name, error=e), "warning")
 
     def _generate_agents_md(self, repo: SourceRepo):
         """扫描源码结构，让 LLM 生成 AGENTS.md"""
-        self.chat.progress(f"为 {repo.name} 生成项目地图 (AGENTS.md)...")
+        self.chat.progress(t("agents_md.generate_start", name=repo.name))
 
         # 1. 收集源码结构信息
         context = _collect_repo_context(repo)
@@ -113,7 +114,7 @@ class AgentsMdMixin:
             f.write(content)
 
         logger.info(f"Generated AGENTS.md for {repo.name} at {agents_md_path}")
-        self.chat.say(f"✅ 已为 {repo.name} 生成 AGENTS.md", "success")
+        self.chat.say(t("agents_md.generate_done", name=repo.name), "success")
 
     # ═══════════════════════════════════════════
     #  加载
@@ -142,7 +143,7 @@ class AgentsMdMixin:
                 continue
             limit = getattr(self.ctx_limits, "agents_md_chars", 8000)
             if len(content) > limit:
-                content = content[:limit] + "\n...(已截断)"
+                content = content[:limit] + "\n" + t("agents_md.truncated")
             return content
         return ""
 
@@ -351,7 +352,7 @@ def _read_dependency_file(repo: SourceRepo) -> str:
         p = os.path.join(repo.path, name)
         if os.path.isfile(p):
             return f"### {name}\n```\n{_read_truncated(p, 2000)}\n```"
-    return "(无依赖声明文件)"
+    return t("agents_md.no_deps")
 
 
 def _read_truncated(path: str, max_chars: int) -> str:
@@ -360,10 +361,10 @@ def _read_truncated(path: str, max_chars: int) -> str:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(max_chars + 100)
         if len(content) > max_chars:
-            content = content[:max_chars] + "\n...(已截断)"
+            content = content[:max_chars] + "\n" + t("agents_md.truncated")
         return content
     except Exception as e:
-        return f"(读取失败: {e})"
+        return t("agents_md.read_failed", error=e)
 
 
 def _split_sections(text: str) -> list:
@@ -407,7 +408,7 @@ def _build_generation_prompt(repo: SourceRepo, context: dict) -> str:
     max_entries = 150
     for i, (rel, lines) in enumerate(tree):
         if i >= max_entries:
-            tree_text += f"\n... (另外 {len(tree) - max_entries} 个文件省略)\n"
+            tree_text += f"\n... ({len(tree) - max_entries} more files omitted)\n"
             break
         tree_text += f"{lines:>6}  {rel}\n"
 
@@ -416,52 +417,33 @@ def _build_generation_prompt(repo: SourceRepo, context: dict) -> str:
     for label, content in context.get("key_files", {}).items():
         key_files_text += f"\n### {label}\n```\n{content}\n```\n"
 
-    deps_text = context.get("deps", "(无)")
+    deps_text = context.get("deps", t("reporter.fallback_none"))
 
-    return f"""你是一名高级工程师，正在为一个项目生成 AGENTS.md 文件。
-AGENTS.md 是给 AI Agent 看的项目地图，帮助 Agent 理解项目结构，在排查问题时快速定位相关代码。
+    # 加载 prompt 模板
+    from src.i18n import get_lang
+    prompts_root = Path(__file__).parent.parent.parent / "prompts"
+    lang = get_lang()
+    prompt_path = prompts_root / lang / "agents_md.md"
+    fallback_path = prompts_root / "zh" / "agents_md.md"
+    template = None
+    for p in [prompt_path, fallback_path]:
+        if p.exists():
+            template = p.read_text(encoding="utf-8")
+            break
 
-## 项目信息
-- 名称: {repo.name}
-- 语言: {repo.language or '未知'}
-- 仓库: {repo.repo_url or '未知'}
+    if template is None:
+        # 内联兜底
+        template = (
+            "Generate AGENTS.md for project {repo_name}.\n\n"
+            "## Source Structure\n```\n{tree_text}\n```\n\n"
+            "## Key Files\n{key_files_text}\n\n## Dependencies\n{deps_text}\n"
+        )
 
-## 源码结构（文件 / 行数）
-```
-{tree_text}
-```
-
-## 关键文件内容
-{key_files_text}
-
-## 依赖
-{deps_text}
-
-## 输出要求
-请生成一份 AGENTS.md，**面向 AI Agent 阅读**（不是给人类的 README）。包含以下部分：
-
-### 1. 项目概述
-2-3 句话说明项目做什么、核心技术栈。
-
-### 2. 目录结构
-每个目录和关键文件的职责，用缩进树形结构展示。标注行数帮助 Agent 判断文件规模。
-
-### 3. 核心模块与关系
-模块之间的依赖、调用关系。数据如何流转。用简洁的文字描述，不需要画图。
-
-### 4. 关键路径
-- **启动流程**: 从入口文件到服务就绪的调用链
-- **请求处理**: 一个典型请求的生命周期（如果是 Web 服务）
-- **错误处理**: 异常如何传播、在哪里被捕获
-
-### 5. 配置与环境
-关键配置文件、环境变量、外部依赖（数据库、消息队列等）。
-
-### 6. 问题定位指南
-基于项目结构，给出常见问题类型（崩溃、性能、配置错误等）的排查起点——应该先看哪个文件、哪个模块。
-
-### 格式要求
-- 直接输出 markdown 内容，不要加额外说明
-- 简洁实用，避免废话
-- 总长度控制在 3000-5000 字符
-"""
+    return template.format(
+        repo_name=repo.name,
+        repo_language=repo.language or t("reporter.fallback_none"),
+        repo_url=repo.repo_url or t("reporter.fallback_none"),
+        tree_text=tree_text,
+        key_files_text=key_files_text,
+        deps_text=deps_text,
+    )
