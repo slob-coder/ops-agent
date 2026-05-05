@@ -460,19 +460,55 @@ class HumanChannel:
         banner_help = t("chat.banner_help")
         banner_quit = t("chat.banner_quit")
 
+        # 动态计算显示宽度（兼容 CJK 双宽字符）
+        def _display_width(s: str) -> int:
+            import unicodedata
+            w = 0
+            for ch in s:
+                eaw = unicodedata.east_asian_width(ch)
+                w += 2 if eaw in ('W', 'F') else 1
+            return w
+
+        # 构建各行内容（不含颜色、边框），然后统一对齐
+        commands = [
+            ("status", banner_status),
+            ("pause",  banner_pause),
+            ("resume", banner_resume),
+            ("stop",   banner_stop),
+            ("help",   banner_help),
+            ("quit",   banner_quit),
+        ]
+
+        # 计算所需宽度：取所有行中最长者
+        inner_lines = [
+            f"  {banner_title}",
+            "",
+            f"  {banner_channel}: {backend_names}",
+            "",
+            f"  {banner_hint}",
+        ]
+        for cmd, desc in commands:
+            inner_lines.append(f"    {cmd}    {desc}")
+
+        inner_width = max(_display_width(line) for line in inner_lines)
+        box_width = inner_width + 2  # 左右 │ 各占 1
+
+        def _pad(line: str) -> str:
+            """右填充空格使显示宽度对齐"""
+            pw = inner_width - _display_width(line)
+            return line + " " * max(pw, 0)
+
         with self._console_backend._output_lock if self._console_backend else self._output_lock:
-            print(f"""
-{Color.CYAN}╭───────────────────────────────────────────────────────╮
-│  {Color.BOLD}{banner_title}{Color.RESET}{Color.CYAN}                   │
-│                                                       │
-│  {banner_channel}: {Color.YELLOW}{backend_names}{Color.RESET}                              │
-│                                                       │
-│  {banner_hint}                            │
-│    {Color.YELLOW}status{Color.CYAN}    {banner_status}                              │
-│    {Color.YELLOW}pause{Color.CYAN}     {banner_pause}                           │
-│    {Color.YELLOW}resume{Color.CYAN}    {banner_resume}                              │
-│    {Color.YELLOW}stop{Color.CYAN}      {banner_stop}                       │
-│    {Color.YELLOW}help{Color.CYAN}      {banner_help}                              │
-│    {Color.YELLOW}quit{Color.CYAN}      {banner_quit}                                 │
-╰───────────────────────────────────────────────────────╯{Color.RESET}{mode_hint}
-""", flush=True)
+            border = "─" * box_width
+            lines = []
+            lines.append(f"╭{border}╮")
+            lines.append(f"│{_pad(f'  {Color.BOLD}{banner_title}{Color.RESET}')}{Color.CYAN}│")
+            lines.append(f"│{_pad('')}│")
+            lines.append(f"│{_pad(f'  {banner_channel}: {Color.YELLOW}{backend_names}{Color.RESET}')}{Color.CYAN}│")
+            lines.append(f"│{_pad('')}│")
+            lines.append(f"│{_pad(f'  {banner_hint}')}│")
+            for cmd, desc in commands:
+                lines.append(f"│{_pad(f'    {Color.YELLOW}{cmd}{Color.CYAN}    {desc}')}│")
+            lines.append(f"╰{border}╯")
+
+            print(Color.CYAN + f"\n".join(lines) + Color.RESET + mode_hint, flush=True)
