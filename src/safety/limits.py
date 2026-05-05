@@ -60,7 +60,7 @@ class LimitsConfig:
     silence_window_seconds: int = 1800
 
     # ── 命令数量限制 ──
-    max_observe_commands: int = 10
+    max_observe_commands: int = 20
     max_verify_steps: int = 6
     max_quick_observe_commands: int = 4
     max_gap_commands: int = 8

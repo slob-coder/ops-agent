@@ -21,22 +21,42 @@ class PipelineMixin:
     """完整的 OODA 修复流水线"""
 
     def _observe(self) -> str:
-        """感知：让 LLM 决定看什么，然后执行"""
-        self.chat.progress("分析观察目标...")
+        """感知：patrol 模式使用分层调度，investigate/incident 模式由 LLM 选择"""
         watchlist = self.notebook.read("config/watchlist.md")
-        recent = self._recent_incidents_summary()
 
-        prompt = self._fill_prompt(
-            "observe",
-            watchlist=watchlist,
-            current_issue=self.current_issue,
-            recent_incidents=recent,
-        )
+        if self.mode == "patrol":
+            # ── patrol: 分层调度，确保 watchlist 命令全覆盖 ──
+            self._patrol_round = getattr(self, "_patrol_round", 0) + 1
+            commands = self._parse_watchlist_commands(watchlist, self._patrol_round)
 
-        response = self._ask_llm(prompt, phase="OBSERVE")
+            if not commands:
+                # fallback: 没有可解析的命令时仍让 LLM 选
+                self.chat.progress("分析观察目标...")
+                recent = self._recent_incidents_summary()
+                prompt = self._fill_prompt(
+                    "observe",
+                    watchlist=watchlist,
+                    current_issue=self.current_issue,
+                    recent_incidents=recent,
+                )
+                response = self._ask_llm(prompt, phase="OBSERVE")
+                commands = self._extract_commands(response)
 
-        # 提取命令列表
-        commands = self._extract_commands(response)
+            tier_info = f"round={self._patrol_round}, {len(commands)} 条命令"
+            self.chat.progress(f"巡检中 ({tier_info})...")
+        else:
+            # ── investigate/incident: LLM 围绕当前问题选择 ──
+            self.chat.progress("分析观察目标...")
+            recent = self._recent_incidents_summary()
+            prompt = self._fill_prompt(
+                "observe",
+                watchlist=watchlist,
+                current_issue=self.current_issue,
+                recent_incidents=recent,
+            )
+            response = self._ask_llm(prompt, phase="OBSERVE")
+            commands = self._extract_commands(response)
+
         if not commands:
             return ""
 

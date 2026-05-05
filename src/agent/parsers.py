@@ -14,6 +14,60 @@ logger = logging.getLogger("ops-agent")
 class ParsersMixin:
     """LLM 输出解析、命令提取、指纹计算等工具方法"""
 
+    # ─── Watchlist 分层调度 ───
+
+    # 层级优先级：数字越小越重要，每轮必检
+    _WATCHLIST_TIERS = {
+        "🔴": {"priority": 0, "name": "核心基础设施", "every_n": 1},
+        "🟠": {"priority": 1, "name": "核心业务服务", "every_n": 2},
+        "🟡": {"priority": 2, "name": "主机级服务",   "every_n": 4},
+        "🔵": {"priority": 3, "name": "安全与异常",   "every_n": 8},
+    }
+
+    def _parse_watchlist_commands(self, watchlist_text: str, patrol_round: int = 0) -> list[str]:
+        """从 watchlist.md 解析命令，按分层调度策略返回本轮应执行的命令列表。
+
+        patrol_round 从 0 递增，每轮 patrol 调用时 +1。
+        🔴 每轮必检，🟠 每 2 轮，🟡 每 4 轮，🔵 每 8 轮。
+        """
+        commands_by_tier: dict[str, list[str]] = {}
+        current_tier = None
+
+        for line in watchlist_text.split("\n"):
+            # 检测层级标题（### 🔴 核心基础设施）
+            for emoji, info in self._WATCHLIST_TIERS.items():
+                if emoji in line and line.strip().startswith("###"):
+                    current_tier = emoji
+                    commands_by_tier.setdefault(current_tier, [])
+                    break
+            else:
+                # 在某个层级内，提取反引号中的命令
+                if current_tier:
+                    # 匹配 `- 每 N 秒：\`命令\`` 格式
+                    cmd_match = re.search(r"`([^`]+)`", line)
+                    if cmd_match and not line.strip().startswith("#"):
+                        cmd = cmd_match.group(1).strip()
+                        # 过滤掉非命令内容（纯描述行）
+                        if cmd and not cmd.startswith("观察源") and len(cmd) > 3:
+                            commands_by_tier.setdefault(current_tier, []).append(cmd)
+
+        # 按轮转策略筛选
+        result = []
+        for emoji, info in self._WATCHLIST_TIERS.items():
+            tier_cmds = commands_by_tier.get(emoji, [])
+            if not tier_cmds:
+                continue
+            every_n = info["every_n"]
+            if patrol_round % every_n == 0:
+                result.extend(tier_cmds)
+
+        logger.debug(
+            f"watchlist 分层调度 round={patrol_round}, "
+            f"tier_counts={{{', '.join(f'{e}:{len(commands_by_tier.get(e,[]))}' for e in self._WATCHLIST_TIERS)}}}, "
+            f"selected={len(result)}"
+        )
+        return result
+
     # ─── 通用工具 ───
 
     def _extract_commands(self, text: str, allow_fallback: bool = True) -> list:
