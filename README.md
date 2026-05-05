@@ -1,3 +1,5 @@
+**[English](./README.en.md)** | 中文
+
 # OpsAgent — 数字运维员工
 
 > 一个实时在岗、会成长、在人类监督下工作的 AI 运维 Agent。
