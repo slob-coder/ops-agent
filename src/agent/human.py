@@ -371,6 +371,10 @@ class HumanInteractionMixin:
                         self.chat.say(t("human.new_interrupt"), "info")
                         return
 
+                    self.chat.cmd_log(cmd)
+                    result = self._run_cmd(cmd, timeout=20)
+                    cmd_results.append(str(result))
+
                 # 本轮结果摘要
                 round_summary = "\n".join(
                     f"$ {cmd}\n{result}"
