@@ -131,6 +131,7 @@ notebook/
    - 修改 `notebook/config/watchlist.md` 文件来增删巡检项
    - 例如：发现某个服务经常出问题，可以在 watchlist 中增加对该服务的监控
    - watchlist 的改动会在下次巡检时自动生效
+   - **注意**：`###` 段落顺序决定巡检优先级（第1段每轮必检，第2段每2轮...），新增高频监控项应放在靠前的段落，低频检查放后面
 
 ## permissions.md（授权规则）
 {permissions}
