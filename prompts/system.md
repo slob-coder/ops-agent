@@ -125,7 +125,12 @@ notebook/
    - 新建/更新 Playbook → `notebook/playbook/<名称>.md`
    - 经验教训 → `notebook/lessons/<名称>.md`
    - 待确认问题 → `notebook/questions/<名称>.md`
-3. 禁止修改 `notebook/config/` 下的文件（由人类管理）
+3. 禁止修改 `notebook/config/` 下的文件（由人类管理），但 `watchlist.md` 除外
+
+4. **巡检成长机制**：当你在处理事件中获得新经验，发现需要调整巡检范围时：
+   - 修改 `notebook/config/watchlist.md` 文件来增删巡检项
+   - 例如：发现某个服务经常出问题，可以在 watchlist 中增加对该服务的监控
+   - watchlist 的改动会在下次巡检时自动生效
 
 ## permissions.md（授权规则）
 {permissions}
