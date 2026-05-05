@@ -151,6 +151,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--password", action="store_true",
                         help="使用密码认证(将交互式提示输入,需要 sshpass)")
     parser.add_argument("--readonly", action="store_true", help="只读模式")
+    parser.add_argument("--lang", choices=["zh", "en"], default=None,
+                        help="Language (zh/en), default: zh")
     parser.add_argument("--debug", action="store_true", help="调试模式")
 
     return parser
@@ -214,6 +216,10 @@ def main():
     # 主运行模式
     parser = _build_parser()
     args = parser.parse_args()
+
+    # 初始化 i18n
+    from src.i18n import init as i18n_init
+    i18n_init(cli_arg=args.lang)
 
     workspace = _resolve_workspace(args.workspace, args.notebook)
 

@@ -24,6 +24,7 @@ from src.agent.metrics import MetricsMixin
 from src.agent.parsers import ParsersMixin
 from src.agent.agents_md import AgentsMdMixin
 from src.context_limits import get_context_limits, reload_context_limits
+from src.i18n import t as _
 
 # ─── 日志配置 ───
 logging.basicConfig(
@@ -257,10 +258,10 @@ class OpsAgent(
     def onboard(self):
         """首次运行：探索环境、生成 system-map"""
         if self.notebook.exists("system-map.md"):
-            self.chat.say("我已经入职过了，读取现有笔记本继续工作。")
+            self.chat.say(_("core.onboard_done"))
             return
 
-        self.chat.say("首次运行，开始入职探索...", "info")
+        self.chat.say(_("core.onboard_start"), "info")
         results = self.tools.explore()
 
         # 把探索结果整理成文本
@@ -269,7 +270,7 @@ class OpsAgent(
             explore_text += f"\n### {name}\n```\n{result.output[:self.ctx_limits.explore_output_chars]}\n```\n"
 
         # 让 LLM 生成 system-map
-        self.chat.say("正在分析系统环境...", "info")
+        self.chat.say(_("core.onboard_analyzing"), "info")
         prompt = f"""你是一名运维工程师，刚刚登录到一台新服务器并执行了一系列探索命令。
 请根据以下输出，写一份系统拓扑说明（system-map.md）。
 
@@ -347,7 +348,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
         self.notebook.write("README.md", readme)
         self.notebook.commit("Onboarding complete")
 
-        self.chat.say("入职完成！已生成 system-map.md 和 watchlist.md，开始巡检。", "success")
+        self.chat.say(_("core.onboard_complete"), "success")
 
     # ═══════════════════════════════════════════
     #  主循环
@@ -361,8 +362,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
             recovered = self.recover_state()
             if recovered:
                 self.chat.say(
-                    f"⚠️ 检测到上次未完成的工作 (incident={self.current_incident})"
-                    f",已恢复状态",
+                    _("core.recovered", incident=self.current_incident),
                     "warning",
                 )
         except Exception as e:
@@ -384,7 +384,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 logger.warning(f"probation check crashed: {e}")
 
         self.onboard()
-        self.chat.say("已上岗，进入巡检模式。", "success")
+        self.chat.say(_("core.on_duty"), "success")
 
         while self._running:
             try:
@@ -399,11 +399,11 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                         and self._running):
                     self._interruptible_sleep(self.INTERVALS.get("patrol", 60))
             except KeyboardInterrupt:
-                self.chat.say("收到退出信号，下班了。", "info")
+                self.chat.say(_("core.exit_signal"), "info")
                 break
             except (LLMInterrupted, CommandInterrupted) as e:
                 # 被人类打断 —— 优雅处理
-                self.chat.log(f"已中断当前任务（{type(e).__name__}）")
+                self.chat.log(_("core.interrupted", error_type=type(e).__name__))
                 if self.current_incident:
                     self.notebook.append_to_incident(
                         self.current_incident,
@@ -420,14 +420,13 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                     self.llm_degraded = True
                     self.readonly = True
                     self.chat.say(
-                        f"🚨 LLM 调用持续失败，已切换到只读模式。\n"
-                        f"原因: {e}\n我会每 5 分钟尝试自动恢复。请检查 API key / 网络。",
+                        _("core.llm_degraded", reason=e),
                         "critical",
                     )
                 self._interruptible_sleep(300)
             except Exception as e:
                 logger.error(f"主循环异常: {e}", exc_info=True)
-                self.chat.say(f"我遇到了内部错误：{e}，继续工作。", "warning")
+                self.chat.say(_("core.internal_error", error=e), "warning")
                 self._interruptible_sleep(10)
 
         self.stop_health_server()
@@ -467,7 +466,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
         frozen, reason = self.emergency.check()
         if frozen and not self.readonly:
             self.readonly = True
-            self.chat.say(f"🚨 紧急停止已激活: {reason}。已切换到只读模式。", "critical")
+            self.chat.say(_("core.emergency_stop", reason=reason), "critical")
         elif not frozen and self.readonly and self.current_incident is None:
             pass
 
@@ -481,7 +480,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
             self._next_target()
 
         # ── 感知 ──
-        self.chat.log(f"巡检中... [target={self.current_target.name}, mode={self.mode}]")
+        self.chat.log(_("core.patrol_log", name=self.current_target.name, mode=self.mode))
         observations = self._observe()
 
         # 巡检过程中可能有人插话
@@ -503,7 +502,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
             return
 
         if assessment.get("status") == "NORMAL":
-            self.chat.log("一切正常")
+            self.chat.log(_("observe.all_normal"))
             # Sprint 7-8: 正常时也执行维护
             self._smart_maintenance()
             self._interruptible_sleep(self.INTERVALS.get(self.mode, 60))
@@ -522,14 +521,13 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
         if last_fired is not None and (now_ts - last_fired) < self._silence_window_seconds:
             remaining = int(self._silence_window_seconds - (now_ts - last_fired))
             self.chat.log(
-                f"已知未解决异常(静默中,还剩 {remaining}s): "
-                f"[{self.current_target.name}] {summary}"
+                _("observe.silence_known", remaining=remaining, target=self.current_target.name, summary=summary)
             )
             self.current_issue = ""
             return
         self._issue_fingerprints[fp] = now_ts
 
-        self.chat.notify(f"[{self.current_target.name}] 发现异常（严重度 {severity}/10）：{summary}", "warning")
+        self.chat.notify(_("incident.found", target=self.current_target.name, severity=severity, summary=summary), "warning")
         self.mode = self.INVESTIGATE
 
         # 创建 Incident
@@ -548,7 +546,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
         )
 
         # ── 进入状态机 ──
-        self.chat.say("🔍 进入调查模式", "observe")
+        self.chat.say(_("incident.enter_investigate"), "observe")
         self._incident_loop(assessment, observations, summary)
 
         # ── 清理 ──
@@ -617,8 +615,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 if next_action == "COLLECT_MORE":
                     if diagnose_rounds >= max_diagnose_rounds:
                         self.chat.say(
-                            f"已调查 {diagnose_rounds} 轮仍无定论，"
-                            f"尝试基于当前信息修复",
+                            _("incident.diagnose_rounds_exceeded", rounds=diagnose_rounds),
                             "warning",
                         )
                         state = "PLAN"
@@ -628,14 +625,14 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                     gaps = diagnosis.get("gaps", [])
                     if not gaps:
                         self.chat.say(
-                            "LLM 说需要更多信息但没给出命令，尝试修复",
+                            _("observe.collect_more_no_gaps"),
                             "warning",
                         )
                         state = "PLAN"
                         continue
 
                     self.chat.progress(
-                        f"补充收集信息... (第 {diagnose_rounds + 1} 轮)"
+                        _("observe.collect_more_progress", round=diagnose_rounds + 1)
                     )
                     extra = self._collect_gap_commands(gaps)
                     if extra:
@@ -658,7 +655,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 elif next_action == "MONITOR":
                     monitor_seconds = 60
                     self.chat.say(
-                        f"诊断建议观察等待，{monitor_seconds}s 后重新检查",
+                        _("observe.monitor_wait", seconds=monitor_seconds),
                         "info",
                     )
                     self.notebook.append_to_incident(
@@ -672,9 +669,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
 
                 elif next_action == "ESCALATE":
                     self.chat.notify(
-                        f"⚠️ 需要人类介入:\n{summary}\n"
-                        f"诊断: {diagnosis.get('hypothesis', '')}\n"
-                        f"原因: {diagnosis.get('facts', '')}",
+                        _("incident.escalate_notify", summary=summary, hypothesis=diagnosis.get('hypothesis', ''), facts=diagnosis.get('facts', '')),
                         "critical",
                     )
                     self.notebook.append_to_incident(
@@ -685,24 +680,21 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
 
                 else:  # FIX
                     self.chat.say(
-                        f"诊断完成: {diagnosis.get('hypothesis', '')}",
+                        _("incident.diagnose_complete", hypothesis=diagnosis.get('hypothesis', '')),
                         "info",
                     )
 
                     # escalate=true 时通知人类但不阻塞
                     if diagnosis.get("escalate"):
                         self.chat.notify(
-                            f"⚠️ 复杂问题，我会继续尝试解决:\n{summary}\n"
-                            f"诊断: {diagnosis.get('hypothesis', '')}\n"
-                            f"把握度: {diagnosis.get('confidence', 0)}%\n"
-                            f"如需干预请随时输入指令。",
+                            _("incident.escalate_complex", summary=summary, hypothesis=diagnosis.get('hypothesis', ''), confidence=diagnosis.get('confidence', 0)),
                             "warning",
                         )
 
                     # Sprint 3: 代码 bug 自动补丁
                     rtype = diagnosis.get("type", "unknown")
                     self.chat.say(
-                        f"🔧 类型: {rtype} | 开始自主修复", "action"
+                        _("incident.type_action", rtype=rtype), "action"
                     )
                     self._maybe_run_patch_loop(diagnosis)
 
@@ -713,8 +705,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 fix_attempts += 1
                 if fix_attempts > max_fix_attempts:
                     self.chat.notify(
-                        f"⚠️ {max_fix_attempts} 次修复尝试均失败，"
-                        f"请关注:\n{summary}",
+                        _("incident.fix_attempts_failed", attempts=max_fix_attempts, summary=summary),
                         "critical",
                     )
                     self.notebook.append_to_incident(
@@ -728,13 +719,13 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 plan = self._plan(diagnosis)
                 if not plan:
                     self.chat.progress(
-                        f"方案生成失败 ({fix_attempts}/{max_fix_attempts})"
+                        _("incident.plan_gen_failed", attempt=fix_attempts, max=max_fix_attempts)
                     )
                     if fix_attempts < max_fix_attempts:
                         state = "PLAN"
                         continue
                     self.chat.notify(
-                        f"⚠️ 无法制定修复方案:\n{summary}", "critical"
+                        _("incident.fix_plan_failed", summary=summary), "critical"
                     )
                     break
 
@@ -747,7 +738,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 # 只读模式检查
                 if self.readonly:
                     self.chat.say(
-                        f"只读模式，不执行操作。方案：\n{plan.to_markdown()}",
+                        _("incident.readonly_mode", plan=plan.to_markdown()),
                         "info",
                     )
                     break
@@ -756,7 +747,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 decision = self.trust.check(plan)
                 if decision == DENY:
                     self.chat.say(
-                        f"操作被授权规则拒绝：{plan.action}", "warning"
+                        _("incident.denied_by_trust", action=plan.action), "warning"
                     )
                     break
 
@@ -768,7 +759,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 )
                 if not allowed:
                     self.chat.notify(
-                        f"⛔ 限制引擎拒绝: {limit_reason}", "critical"
+                        _("incident.denied_by_limits", reason=limit_reason), "critical"
                     )
                     break
 
@@ -777,17 +768,17 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                     approved = self.chat.request_approval(plan.to_markdown())
                     if not approved:
                         self.notebook.append_to_incident(
-                            self.current_incident, "\n（人类否决）\n"
+                            self.current_incident, "\n" + _("incident.human_rejected") + "\n"
                         )
                         break
                 if decision == NOTIFY_THEN_DO:
-                    self.chat.say(f"即将执行：{plan.action}", "action")
+                    self.chat.say(_("incident.execute_plan", action=plan.action), "action")
 
                 state = "EXECUTE"
 
             # ── EXECUTE ──
             elif state == "EXECUTE":
-                self.chat.progress("执行中...")
+                self.chat.progress(_("incident.executing"))
                 before_state = self._targeted_observe(plan)
                 exec_result, exec_all_success = self._execute(plan)
 
@@ -807,7 +798,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
 
                 if not exec_all_success:
                     # 执行失败：先回滚，再回 DIAGNOSE 重新分析
-                    self.chat.say("⚠️ 执行步骤失败，执行回滚...", "warning")
+                    self.chat.say(_("incident.exec_failed"), "warning")
                     if plan.rollback_steps:
                         rollback_result = self._execute_rollback(plan)
                         self.notebook.append_to_incident(
@@ -816,7 +807,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                             f"```\n{rollback_result[:self.ctx_limits.exec_result_chars]}\n```\n",
                         )
                     else:
-                        self.chat.say("无回滚步骤可用", "warning")
+                        self.chat.say(_("incident.no_rollback"), "warning")
 
                     # 把失败信息加入 observations，回到 DIAGNOSE
                     observations = (
@@ -826,7 +817,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                         f"结果: {exec_result[:self.ctx_limits.exec_result_for_rediagnose_chars]}\n"
                         f"已回滚: {'是' if plan.rollback_steps else '无回滚步骤'}"
                     )
-                    self.chat.progress("执行失败，重新诊断...")
+                    self.chat.progress(_("incident.rollback_executing"))
                     state = "DIAGNOSE"
                 else:
                     state = "VERIFY"
@@ -837,7 +828,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
 
                 if verify_result.passed:
                     fix_verified = True
-                    self.chat.say("✅ 验证通过，问题已修复！", "success")
+                    self.chat.say(_("incident.verify_passed"), "success")
                     self.notebook.append_to_incident(
                         self.current_incident, "\n## 验证通过\n"
                     )
@@ -848,7 +839,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                 elif verify_result.result == "UNCERTAIN":
                     # 观察超时但未恶化 → 记录为"部分修复"，进入 REFLECT
                     self.chat.say(
-                        "⚠️ 验证不确定：观察期内未收敛但未恶化，记录为部分修复",
+                        _("incident.verify_uncertain"),
                         "warning",
                     )
                     self.notebook.append_to_incident(
@@ -858,7 +849,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                     state = "REFLECT"
                 else:
                     self.chat.say(
-                        f"验证未通过 (尝试 {fix_attempts}/{max_fix_attempts})",
+                        _("incident.verify_failed", attempt=fix_attempts, max=max_fix_attempts),
                         "warning",
                     )
                     self.notebook.append_to_incident(
@@ -875,12 +866,11 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                             f"命令: {plan.action}\n"
                             f"结果: {exec_result[:self.ctx_limits.exec_result_for_rediagnose_chars]}\n验证: 未通过"
                         )
-                        self.chat.progress("验证未通过，重新诊断...")
+                        self.chat.progress(_("incident.verify_fail_rediagnose"))
                         state = "DIAGNOSE"
                     else:
                         self.chat.notify(
-                            f"⚠️ {max_fix_attempts} 次修复均未通过验证:\n"
-                            f"{summary}",
+                            _("incident.fix_all_failed", attempts=max_fix_attempts, summary=summary),
                             "critical",
                         )
                         state = "REFLECT"
@@ -894,8 +884,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
         else:
             # 循环耗尽，未能在最大轮次内解决问题
             self.chat.say(
-                f"已达到最大处理轮次 ({max_total_rounds})，"
-                f"仍未能解决问题，暂停调查。",
+                _("incident.max_rounds_exceeded", rounds=max_total_rounds),
                 "warning",
             )
             self.notebook.append_to_incident(
@@ -992,9 +981,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                     self._last_scorecard_week = current_week
                     if data:
                         self.chat.say(
-                            f"📊 周度自评 {current_week} — "
-                            f"层级: {data.growth_level.value}  "
-                            f"修复率: {data.fix_rate*100:.0f}%",
+                            _("patch.weekly_scorecard", week=current_week, level=data.growth_level.value, rate=data.fix_rate*100),
                             "info",
                         )
                 except Exception as e:

@@ -6,6 +6,8 @@ import re
 import logging
 from pathlib import Path
 
+from src.i18n import get_lang, t as _
+
 logger = logging.getLogger("ops-agent")
 
 
@@ -17,10 +19,25 @@ class PromptsMixin:
     # ═══════════════════════════════════════════
 
     def _load_prompt(self, name: str) -> str:
-        """加载 prompt 模板"""
+        """加载 prompt 模板，按语言优先级查找"""
         if name not in self._prompts:
-            prompt_path = Path(__file__).parent.parent.parent / "prompts" / f"{name}.md"
-            self._prompts[name] = prompt_path.read_text(encoding="utf-8")
+            prompts_root = Path(__file__).parent.parent.parent / "prompts"
+            lang = get_lang()
+
+            # 1. 语言目录: prompts/{lang}/{name}.md
+            lang_path = prompts_root / lang / f"{name}.md"
+            # 2. 旧路径: prompts/{name}.md（兼容 fallback）
+            fallback_path = prompts_root / f"{name}.md"
+            # 3. 中文兜底: prompts/zh/{name}.md
+            zh_path = prompts_root / "zh" / f"{name}.md"
+
+            for p in [lang_path, fallback_path, zh_path]:
+                if p.exists():
+                    self._prompts[name] = p.read_text(encoding="utf-8")
+                    break
+            else:
+                raise FileNotFoundError(f"Prompt not found: {name}")
+
         return self._prompts[name]
 
     def _fill_prompt(self, name: str, **kwargs) -> str:
@@ -29,7 +46,7 @@ class PromptsMixin:
         for key, value in kwargs.items():
             template = template.replace(f"{{{key}}}", str(value))
         # 清理未填充的变量
-        template = re.sub(r"\{[a-z_]+\}", "(无)", template)
+        template = re.sub(r"\{[a-z_]+\}", _("prompt.none"), template)
         return template
 
     def _build_system_prompt(self) -> str:
@@ -55,10 +72,10 @@ class PromptsMixin:
         return self._fill_prompt(
             "system",
             mode=self.mode,
-            readonly="是(只读模式,不执行任何修改操作)" if self.readonly else "否",
-            active_incident=self.current_incident or "无",
-            permissions=permissions or "(未配置,使用默认策略)",
-            system_map=system_map or "(尚未探索,系统拓扑未知)",
+            readonly=_("prompt.readonly_yes") if self.readonly else _("prompt.readonly_no"),
+            active_incident=self.current_incident or _("prompt.no_incident"),
+            permissions=permissions or _("prompt.no_permissions"),
+            system_map=system_map or _("prompt.no_system_map"),
             target_info=target_info,
             limits_status=limits_status,
             notebook_path=str(self.notebook.path),
@@ -67,46 +84,48 @@ class PromptsMixin:
     def _build_target_context(self) -> str:
         """生成当前目标的描述,告诉 LLM 用什么命令前缀"""
         t = self.current_target
-        lines = [f"当前正在管理的目标: **{t.name}** (类型: {t.mode})"]
+        lines = [_("prompt.target_managing", name=t.name, mode=t.mode)]
         if t.description:
-            lines.append(f"描述: {t.description}")
+            lines.append(_("prompt.target_description", description=t.description))
 
         if t.mode == "ssh":
-            lines.append(f"连接方式: SSH 到 {t.host}")
-            lines.append("命令直接写 shell,Agent 会自动通过 SSH 在远端执行。")
+            lines.append(_("prompt.target_ssh", host=t.host))
+            lines.append(_("prompt.target_ssh_hint"))
         elif t.mode == "docker":
-            lines.append(f"连接方式: Docker {'(本地)' if not t.docker_host else f'({t.docker_host})'}")
-            lines.append("命令运行在工作站本地。要操作容器请用:")
-            lines.append("  - `docker ps` / `docker logs <容器名> --tail 100`")
-            lines.append("  - `docker exec <容器名> <命令>` 进入容器执行")
-            lines.append("  - `docker restart <容器名>` 重启容器")
-            lines.append("  - `docker inspect <容器名>` 查看详情")
+            lines.append(_("prompt.target_docker", host_info="(本地)" if not t.docker_host else f"({t.docker_host})"))
+            lines.append(_("prompt.target_docker_hint"))
+            lines.append(_("prompt.target_docker_ps"))
+            lines.append(_("prompt.target_docker_exec"))
+            lines.append(_("prompt.target_docker_restart"))
+            lines.append(_("prompt.target_docker_inspect"))
             if t.compose_file:
-                lines.append(f"  - 有 compose 文件: `docker compose -f {t.compose_file} <命令>`")
+                lines.append(_("prompt.target_docker_compose", compose_file=t.compose_file))
         elif t.mode == "k8s":
-            lines.append(f"连接方式: Kubernetes (context={t.kubectl_context}, ns={t.namespace})")
-            lines.append("命令运行在工作站本地。要操作集群请用:")
-            lines.append(f"  - `kubectl get pods -n {t.namespace}` / `kubectl get all`")
-            lines.append(f"  - `kubectl logs <pod> -n {t.namespace} --tail=100`")
-            lines.append(f"  - `kubectl describe pod <pod> -n {t.namespace}`")
-            lines.append(f"  - `kubectl exec <pod> -n {t.namespace} -- <命令>`")
-            lines.append(f"  - `kubectl rollout restart deployment/<名> -n {t.namespace}` 滚动重启")
+            lines.append(_("prompt.target_k8s", context=t.kubectl_context, namespace=t.namespace))
+            lines.append(_("prompt.target_k8s_hint"))
+            lines.append(_("prompt.target_k8s_get", namespace=t.namespace))
+            lines.append(_("prompt.target_k8s_logs", namespace=t.namespace))
+            lines.append(_("prompt.target_k8s_describe", namespace=t.namespace))
+            lines.append(_("prompt.target_k8s_exec", namespace=t.namespace))
+            lines.append(_("prompt.target_k8s_rollout", namespace=t.namespace))
         else:
-            lines.append("连接方式: 本地工作站")
+            lines.append(_("prompt.target_local"))
 
         # 列出该目标管理的所有目标(让 LLM 知道还可以切换)
         if len(self.targets) > 1:
             others = [t.name for t in self.targets if t.name != self.current_target.name]
-            lines.append(f"\n你还管理着其他目标: {', '.join(others)}")
-            lines.append("(每轮巡检会自动轮换。如果人类问起其他目标,你需要先用相应的命令前缀)")
+            lines.append(_("prompt.target_others", others=", ".join(others)))
+            lines.append(_("prompt.target_others_hint"))
 
         # 源码地图
         if self.current_target.source_repos:
-            lines.append("\n这台目标对应的源代码:")
+            lines.append(_("prompt.target_source_repo"))
             for repo in self.current_target.source_repos:
                 lines.append(
-                    f"  - {repo.get('name', '?')}: {repo.get('language', '?')},"
-                    f" 路径 {repo.get('path', '?')}"
+                    _("prompt.target_source_repo_item",
+                      name=repo.get('name', '?'),
+                      language=repo.get('language', '?'),
+                      path=repo.get('path', '?'))
                 )
 
         return "\n".join(lines)
@@ -115,15 +134,21 @@ class PromptsMixin:
         """生成限制状态摘要"""
         s = self.limits.status()
         if not s["enabled"]:
-            return "(限制引擎已禁用)"
+            return _("prompt.limits_disabled")
         lines = [
-            f"动作配额: 本小时已用 {s['actions_last_hour']}/{s['max_actions_per_hour']},"
-            f" 今日已用 {s['actions_last_day']}",
-            f"并发 Incident: {s['active_incidents']}/{s['max_concurrent']}",
-            f"Token 用量(本小时): {s['tokens_last_hour']}/{s['tokens_per_hour_budget']}",
+            _("prompt.limits_actions",
+              used_hour=s['actions_last_hour'],
+              max_hour=s['max_actions_per_hour'],
+              used_day=s['actions_last_day']),
+            _("prompt.limits_incidents",
+              active=s['active_incidents'],
+              max=s['max_concurrent']),
+            _("prompt.limits_tokens",
+              used=s['tokens_last_hour'],
+              budget=s['tokens_per_hour_budget']),
         ]
         if s["in_cooldown"]:
-            lines.append(f"⚠️ 处于失败冷却期,还需 {s['cooldown_remaining']} 秒")
+            lines.append(_("prompt.limits_cooldown", remaining=s['cooldown_remaining']))
         return "\n".join(lines)
 
     def _ask_llm(self, prompt: str, max_tokens: int = 0,
