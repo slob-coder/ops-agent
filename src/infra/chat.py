@@ -452,19 +452,27 @@ class HumanChannel:
         banner_title = t("chat.banner_title", agent_name=agent_name)
         banner_hint = t("chat.banner_hint")
 
+        banner_channel = t("chat.banner_channel")
+        banner_status = t("chat.banner_status")
+        banner_pause = t("chat.banner_pause")
+        banner_resume = t("chat.banner_resume")
+        banner_stop = t("chat.banner_stop")
+        banner_help = t("chat.banner_help")
+        banner_quit = t("chat.banner_quit")
+
         with self._console_backend._output_lock if self._console_backend else self._output_lock:
             print(f"""
 {Color.CYAN}╭───────────────────────────────────────────────────────╮
 │  {Color.BOLD}{banner_title}{Color.RESET}{Color.CYAN}                   │
 │                                                       │
-│  交互通道: {Color.YELLOW}{backend_names}{Color.RESET}                              │
+│  {banner_channel}: {Color.YELLOW}{backend_names}{Color.RESET}                              │
 │                                                       │
 │  {banner_hint}                            │
-│    {Color.YELLOW}status{Color.CYAN}    查看我的状态                              │
-│    {Color.YELLOW}pause{Color.CYAN}     暂停我的自主行动                           │
-│    {Color.YELLOW}resume{Color.CYAN}    恢复自主行动                              │
-│    {Color.YELLOW}stop{Color.CYAN}      停止当前调查回到巡检                       │
-│    {Color.YELLOW}help{Color.CYAN}      查看更多命令                              │
-│    {Color.YELLOW}quit{Color.CYAN}      让我下班                                 │
+│    {Color.YELLOW}status{Color.CYAN}    {banner_status}                              │
+│    {Color.YELLOW}pause{Color.CYAN}     {banner_pause}                           │
+│    {Color.YELLOW}resume{Color.CYAN}    {banner_resume}                              │
+│    {Color.YELLOW}stop{Color.CYAN}      {banner_stop}                       │
+│    {Color.YELLOW}help{Color.CYAN}      {banner_help}                              │
+│    {Color.YELLOW}quit{Color.CYAN}      {banner_quit}                                 │
 ╰───────────────────────────────────────────────────────╯{Color.RESET}{mode_hint}
 """, flush=True)

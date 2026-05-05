@@ -90,6 +90,13 @@ chat:
   escalate_detail: "\n详情：{details}"
   banner_title: "{agent_name} — 数字运维员工已上岗"
   banner_hint: "随时打字和我对话。常用指令："
+  banner_channel: "交互通道"
+  banner_status: "查看我的状态"
+  banner_pause: "暂停我的自主行动"
+  banner_resume: "恢复自主行动"
+  banner_stop: "停止当前调查回到巡检"
+  banner_help: "查看更多命令"
+  banner_quit: "让我下班"
 
 notifier:
   observe_failed: "观察函数连续 3 次失败: {error}"

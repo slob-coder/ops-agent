@@ -90,6 +90,13 @@ chat:
   escalate_detail: "\nDetails: {details}"
   banner_title: "{agent_name} — Digital Ops Worker On Duty"
   banner_hint: "Type anytime to chat. Common commands:"
+  banner_channel: "Channel"
+  banner_status: "Check my status"
+  banner_pause: "Pause autonomous actions"
+  banner_resume: "Resume autonomous actions"
+  banner_stop: "Stop current investigation, return to patrol"
+  banner_help: "Show more commands"
+  banner_quit: "Sign off"
 
 notifier:
   observe_failed: "Observe function failed 3 times: {error}"
