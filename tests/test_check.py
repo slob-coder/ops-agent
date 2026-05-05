@@ -103,4 +103,4 @@ class TestRunCheck:
 
             with patch.dict(os.environ, {"OPS_LLM_API_KEY": "sk-test"}):
                 # should not exit
-                run_check(notebook_path=tmpdir, test_llm=False)
+                run_check(workspace_path=tmpdir, test_llm=False)

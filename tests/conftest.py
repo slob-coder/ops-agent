@@ -6,3 +6,7 @@ from pathlib import Path
 _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+# 初始化 i18n，确保 t() 可用
+from src.i18n import init as _i18n_init
+_i18n_init()

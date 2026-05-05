@@ -148,30 +148,30 @@ def check_targets(notebook_path: str, result: CheckResult):
         result.warn(t("check.targets_empty"))
         return
 
-    for i, t in enumerate(targets):
+    for i, tgt in enumerate(targets):
         prefix = f"target[{i}]"
-        name = t.get("name", f"unnamed-{i}")
+        name = tgt.get("name", f"unnamed-{i}")
         prefix = f"target '{name}'"
 
-        if not t.get("name"):
+        if not tgt.get("name"):
             result.error(t("check.target_missing_name", prefix=prefix))
-        if not t.get("type"):
+        if not tgt.get("type"):
             result.error(t("check.target_missing_type", prefix=prefix))
-        elif t["type"] not in ("ssh", "docker", "k8s", "local"):
-            result.error(t("check.target_invalid_type", prefix=prefix, type=t['type']))
+        elif tgt["type"] not in ("ssh", "docker", "k8s", "local"):
+            result.error(t("check.target_invalid_type", prefix=prefix, type=tgt['type']))
 
-        if t.get("type") == "ssh" and not t.get("host"):
+        if tgt.get("type") == "ssh" and not tgt.get("host"):
             result.error(t("check.target_ssh_no_host", prefix=prefix))
 
-        for repo in t.get("source_repos", []):
+        for repo in tgt.get("source_repos", []):
             repo_prefix = f"{prefix}.source_repos[{repo.get('name', '?')}]"
             if not repo.get("path"):
                 result.error(t("check.repo_missing_path", prefix=repo_prefix))
 
     result.info(t("check.target_count", count=len(targets)))
-    for t in targets:
-        ttype = t.get("type", "?")
-        tname = t.get("name", "?")
+    for tgt in targets:
+        ttype = tgt.get("type", "?")
+        tname = tgt.get("name", "?")
         result.info(f"  - {tname} ({ttype})")
 
 

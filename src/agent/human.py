@@ -154,8 +154,8 @@ class HumanInteractionMixin:
             if self._switch_target(name):
                 self.chat.say(t("human.switch_ok", name=name), "success")
                 # 重置目标轮询索引,让下次 round-robin 从这里开始
-                for i, t in enumerate(self.targets):
-                    if t.name == name:
+                for i, tgt in enumerate(self.targets):
+                    if tgt.name == name:
                         self._target_index = i
                         break
             else:

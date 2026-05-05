@@ -231,7 +231,7 @@ class TestRunInit:
                 "OPS_NOTIFIER_TYPE": "none",
             }
             with patch.dict(os.environ, env, clear=False):
-                run_init(notebook_path=tmpdir, from_env=True)
+                run_init(workspace_path=tmpdir, from_env=True)
 
             config_dir = Path(tmpdir) / "config"
             # 检查 targets.yaml
@@ -266,7 +266,7 @@ class TestRunInit:
                 "OPS_NOTIFIER_TYPE": "none",
             }
             with patch.dict(os.environ, env, clear=False):
-                run_init(notebook_path=tmpdir, from_env=True)
+                run_init(workspace_path=tmpdir, from_env=True)
 
             content = (Path(tmpdir) / "config" / "targets.yaml").read_text()
             assert "type: local" in content
@@ -287,7 +287,7 @@ class TestRunInit:
                 "OPS_NOTIFIER_TYPE": "none",
             }
             with patch.dict(os.environ, env, clear=False):
-                run_init(notebook_path=tmpdir, from_env=True)
+                run_init(workspace_path=tmpdir, from_env=True)
 
             content = (Path(tmpdir) / "config" / "targets.yaml").read_text()
             assert "source_repos:" in content
@@ -310,7 +310,7 @@ class TestRunInit:
                 "OPS_NOTIFIER_TYPE": "none",
             }
             with patch.dict(os.environ, env, clear=False):
-                run_init(notebook_path=tmpdir, from_env=True)
+                run_init(workspace_path=tmpdir, from_env=True)
 
             content = (config_dir / "limits.yaml").read_text()
             assert "custom: true" in content
@@ -327,7 +327,7 @@ class TestRunInit:
                 "OPS_NOTIFIER_TYPE": "none",
             }
             with patch.dict(os.environ, env, clear=False):
-                run_init(notebook_path=tmpdir, from_env=True)
+                run_init(workspace_path=tmpdir, from_env=True)
 
             content = (Path(tmpdir) / "config" / "targets.yaml").read_text()
             assert "type: docker" in content
@@ -345,7 +345,7 @@ class TestRunInit:
                 "OPS_NOTIFIER_TYPE": "none",
             }
             with patch.dict(os.environ, env, clear=False):
-                run_init(notebook_path=tmpdir, from_env=True)
+                run_init(workspace_path=tmpdir, from_env=True)
 
             content = (Path(tmpdir) / "config" / "targets.yaml").read_text()
             assert "type: k8s" in content
