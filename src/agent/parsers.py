@@ -253,15 +253,20 @@ class ParsersMixin:
             elif isinstance(s, str) and s.strip():
                 normalized_steps.append({"command": s.strip(), "purpose": "", "wait_seconds": 0})
 
-        # READY 时必须有可执行的 steps；COLLECT_MORE / ESCALATE 允许空
+        # READY 时必须有可执行的 steps（或 verify_steps——纯验证计划）
+        # COLLECT_MORE / ESCALATE 允许空
         next_action = data.get("next_action", "READY")
+        has_verify = bool(data.get("verify_steps"))
         if not normalized_steps and next_action not in ("COLLECT_MORE", "ESCALATE"):
-            logger.warning(f"plan READY 但无有效 steps, 原始 steps={steps[:3]}, 降级为 COLLECT_MORE")
-            # 降级：如果 gaps 有内容，转为 COLLECT_MORE；否则返回 None 重试
-            if data.get("gaps"):
-                next_action = "COLLECT_MORE"
+            if has_verify:
+                # 纯验证计划：服务可能已自愈，只需验证即可关闭 incident
+                logger.info("plan READY 无修复 steps 但有 verify_steps，视为纯验证计划")
             else:
-                return None
+                logger.warning(f"plan READY 但无有效 steps 也没有 verify_steps, 原始 steps={steps[:3]}")
+                if data.get("gaps"):
+                    next_action = "COLLECT_MORE"
+                else:
+                    return None
 
         # 规范化 rollback_steps
         rollback = []

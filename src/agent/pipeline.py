@@ -563,8 +563,8 @@ class PipelineMixin:
 
             # 解析失败时重试一次
             if plan is None:
-                logger.warning("plan JSON 解析失败，重试一次")
-                self.chat.say("⚠️  plan JSON 解析失败，重试一次", "warning")
+                logger.warning("plan 解析未返回有效计划，重试一次")
+                self.chat.say("⚠️  plan 未返回有效计划，重试一次", "warning")
                 retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字或代码查看请求。确保 JSON 完整，不要截断。"
                 response = self._ask_llm(retry_prompt, phase=f"PLAN_R{plan_round}_RETRY")
                 plan = self._parse_plan(response)
@@ -618,8 +618,12 @@ class PipelineMixin:
                     logger.warning("plan 连续 COLLECT_MORE 超出轮次限制，升级为人工介入")
                     self.chat.say("⚠️ 信息仍不足，无法制定修复方案，需要人工介入", "warning")
                     return None
+                elif plan.next_action == "READY" and plan.verify_steps:
+                    # 纯验证计划：服务已自愈，跳过执行直接验证
+                    logger.info("plan READY 无修复 steps 但有 verify_steps，跳过执行进入验证")
+                    self.chat.say("✅ 服务疑似已自愈，跳过修复直接验证", "info")
                 elif plan.next_action == "READY":
-                    logger.warning("plan READY 但无有效 steps，降级为 COLLECT_MORE 或重试")
+                    logger.warning("plan READY 但无有效 steps 也没有 verify_steps")
                     self.chat.say("⚠️ 修复方案无有效步骤，重新收集信息", "warning")
                     if plan.gaps:
                         plan.next_action = "COLLECT_MORE"
