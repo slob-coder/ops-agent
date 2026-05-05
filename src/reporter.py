@@ -14,11 +14,12 @@ reporter — 每日健康报告生成器
 from __future__ import annotations
 
 import os
-import json
 import logging
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from src.reliability.audit import AuditLog
+from src.i18n import t, get_lang
 
 logger = logging.getLogger("ops-agent.reporter")
 
@@ -31,31 +32,6 @@ class DailyReporter:
         if reporter.should_send_today():
             reporter.send_report_for(date_str=None)  # 默认昨天
     """
-
-    LLM_PROMPT_TEMPLATE = """\
-基于以下昨日审计日志和统计数据,为运维负责人生成一份简洁的中文日报。
-
-## 日期
-{date}
-
-## 事件统计
-{event_counts}
-
-## limits 配额状态
-{limits_status}
-
-## 审计事件样本(最多 30 条)
-{event_samples}
-
-## 输出要求
-用 markdown 列表,3-6 条要点,涵盖:
-1. 昨天处理了多少 Incident,自动解决/升级各多少
-2. 关键动作摘要(重启 / 补丁 / PR / revert)
-3. 异常或需要关注的趋势
-4. Token 成本
-
-风格:简洁,像运维工程师写的日报,不要客套。
-"""
 
     def __init__(self, audit: AuditLog, llm=None, notifier=None,
                  limits=None, marker_dir: str = ""):
@@ -88,6 +64,26 @@ class DailyReporter:
         except OSError:
             pass
 
+    # ──────────── Prompt 加载 ────────────
+
+    @staticmethod
+    def _load_prompt_template() -> str:
+        """加载 reporter LLM prompt 模板，按语言目录查找"""
+        prompts_root = Path(__file__).parent.parent / "prompts"
+        lang = get_lang()
+        lang_path = prompts_root / lang / "reporter.md"
+        fallback_path = prompts_root / "zh" / "reporter.md"
+        for p in [lang_path, fallback_path]:
+            if p.exists():
+                return p.read_text(encoding="utf-8")
+        # 最后兜底：内联模板
+        return (
+            "Based on the following audit data for {date}, generate a concise daily report.\n\n"
+            "## Event Statistics\n{event_counts}\n\n"
+            "## Limits Status\n{limits_status}\n\n"
+            "## Event Samples\n{event_samples}\n"
+        )
+
     # ──────────── 生成 ────────────
 
     def generate(self, date_str: str | None = None) -> str:
@@ -104,15 +100,17 @@ class DailyReporter:
 
         # LLM 优先
         if self.llm is not None:
-            prompt = (self.LLM_PROMPT_TEMPLATE
+            template = self._load_prompt_template()
+            prompt = (template
                       .replace("{date}", date_str)
-                      .replace("{event_counts}", self._render_counts(counts) or "(无)")
+                      .replace("{event_counts}", self._render_counts(counts) or t("reporter.fallback_none"))
                       .replace("{limits_status}", limits_status)
                       .replace("{event_samples}", samples))
             try:
                 report = self.llm.ask(prompt, max_tokens=1500)
                 if report and report.strip():
-                    return f"# OpsAgent 日报 — {date_str}\n\n{report.strip()}\n"
+                    title = t("reporter.title", date=date_str)
+                    return f"# {title}\n\n{report.strip()}\n"
             except Exception as e:
                 logger.warning(f"LLM report failed, fallback: {e}")
 
@@ -125,7 +123,7 @@ class DailyReporter:
         report = self.generate(date_str)
         date_str = date_str or (datetime.now(timezone.utc)
                                 - timedelta(days=1)).strftime("%Y-%m-%d")
-        title = f"OpsAgent 日报 — {date_str}"
+        title = t("reporter.title", date=date_str)
 
         sent = False
         if self.notifier is not None:
@@ -158,39 +156,40 @@ class DailyReporter:
 
     def _render_limits(self) -> str:
         if not self.limits:
-            return "(未接入)"
+            return t("reporter.fallback_no_limits")
         try:
             s = self.limits.status() or {}
         except Exception:
-            return "(读取失败)"
+            return t("reporter.fallback_read_fail")
         if not s:
-            return "(无)"
+            return t("reporter.fallback_none")
         lines = []
         for k in ("actions_last_hour", "actions_last_day", "active_incidents",
                   "tokens_last_hour", "in_cooldown"):
             if k in s:
                 lines.append(f"- {k}: {s[k]}")
-        return "\n".join(lines) if lines else "(无)"
+        return "\n".join(lines) if lines else t("reporter.fallback_none")
 
     @staticmethod
     def _render_samples(events: list, max_n: int = 30) -> str:
         if not events:
-            return "(无)"
+            return t("reporter.fallback_none")
         lines = []
         for e in events[:max_n]:
             ts = e.get("timestamp", "")[:19]
-            t = e.get("type", "?")
+            t_type = e.get("type", "?")
             extras = {k: v for k, v in e.items() if k not in ("timestamp", "type")}
             extras_s = ", ".join(f"{k}={v}" for k, v in list(extras.items())[:4])
-            lines.append(f"- [{ts}] {t} {extras_s}")
+            lines.append(f"- [{ts}] {t_type} {extras_s}")
         return "\n".join(lines)
 
     def _fallback_report(self, date_str, counts, limits_status, total) -> str:
-        lines = [f"# OpsAgent 日报 — {date_str}\n"]
-        lines.append(f"> 总事件数: **{total}**(回退模板,LLM 不可用)\n")
-        lines.append("## 事件统计")
-        cs = self._render_counts(counts) or "- (无事件)"
+        title = t("reporter.title", date=date_str)
+        lines = [f"# {title}\n"]
+        lines.append(f"> {t('reporter.fallback_total', total=total)}\n")
+        lines.append(f"## {t('reporter.stats_header')}")
+        cs = self._render_counts(counts) or t("reporter.fallback_no_events")
         lines.append(cs)
-        lines.append("\n## 限制状态")
+        lines.append(f"\n## {t('reporter.limits_header')}")
         lines.append(limits_status)
         return "\n".join(lines) + "\n"

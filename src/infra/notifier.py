@@ -117,7 +117,8 @@ class Notifier(ABC):
     def send(self, title: str, content: str, urgency: str = "info") -> bool: ...
 
     def test_send(self) -> bool:
-        return self.send("OpsAgent 启动", "通知通道已连通", "info")
+        from src.i18n import t
+        return self.send(t("notifier.test_title"), t("notifier.test_content"), "info")
 
 
 class NoOpNotifier(Notifier):
