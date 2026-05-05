@@ -184,7 +184,7 @@ human:
   file_preview: "{target}:\n{preview}"
   file_truncated: "\n...(truncated)"
   file_not_found: "Not found: {target}"
-  collab_enter: "Entering collaborative troubleshooting mode 🤝\nI'll drive the investigation, only pausing for key decisions.\nYou can chime in anytime with additional info or direction.\nType done or 结束 to exit collaboration mode."
+  collab_enter: "Entering collaborative troubleshooting mode 🤝\nI'll drive the investigation, only pausing for key decisions.\nYou can chime in anytime with additional info or direction.\nType done or exit to exit collaboration mode."
   collab_prompt: "Enter your thoughts (type done to exit):"
   collab_timeout: "Collaboration timed out, exiting collaboration mode."
   collab_exit: "Exiting collaboration mode, back to normal operations."
@@ -264,6 +264,70 @@ human:
        Just type a question or task, I'll figure it out.
 
 pipeline:
+  patrol_tier_info: "round={round}, {count} commands"
+  funnel_anomalies: "Perception funnel detected {count} anomaly signals"
+  agent_record: "Executed {rounds} rounds, {cmds} commands total\nConclusion: {conclusion}"
+  human_manual_trigger: "Human manual trigger"
+  truncated_marker: "\n...(truncated)"
+  collab_system_rules: |
+    ## Collaborative Troubleshooting Mode Rules
+    You are troubleshooting together with a human colleague. You should **proactively drive the investigation** — don't ask the human for input at every step.
+
+    ### Output Format
+    Each response must end with an intent marker (on its own line, as the last line):
+
+    - `[CONTINUE]` — You want to keep going, no human input needed.
+      Use for: reading logs, checking status, gathering info, running read-only commands, analyzing intermediate results
+
+    - `[CONFIRM]` — You need human confirmation before proceeding.
+      Use for: write operations, restarting services, modifying configs, directional decisions, uncertain judgments
+
+    - `[WAIT]` — You've finished your current analysis, waiting for the human to provide new info or direction.
+      Use for: hit a dead end, need business context from human, already gave conclusion awaiting feedback
+
+    ### Behavioral Principles
+    1. **Boldly proceed with read-only operations** — checking logs, processes, configs doesn't need confirmation
+    2. **Execute related steps in sequence** — e.g., check logs → find error → check related service status → analyze, all in one go
+    3. **Only stop at key decision points** — restart? change config? unsure of direction? → use [CONFIRM]
+    4. **Keep each response concise** — don't write essays about what you'll do, just do it
+    5. **If you need to run commands, output them in ```commands``` format**
+  collab_continue_prompt: "## Collaborative Troubleshooting History\n{history}\n\nContinue the investigation. If you need to run commands, output them in ```commands``` format.\nEnd your response with an intent marker: [CONTINUE] / [CONFIRM] / [WAIT]"
+  collab_result_append: "{text}\n\nExecution results:\n{result}"
+  role_human: "Human"
+  role_agent: "Agent"
+  free_chat_prompt: |
+    A human colleague sent you a message. Determine whether this is a question (to answer) or a task (to execute).
+  free_chat_question_format: |
+    If it's a question and you can answer without running commands:
+    ```text
+    [direct answer]
+    ```
+
+    If you need to run commands to answer or complete the task:
+
+    First briefly describe what you'll do outside the commands block, then put directly executable shell commands in the commands block:
+
+    I plan to do the following: (brief description)
+    ```commands
+    executable_shell_command1
+    executable_shell_command2
+    ```
+
+    Remember:
+    - Be concise and friendly, don't write essays
+    - Use the context above to understand the human's question
+    - ```commands blocks can only contain directly executable shell commands — absolutely no descriptions, step explanations, or numbered lists (like "1. Backup file")
+    - Descriptions, explanations, plans etc. must go outside the commands block
+    - For multi-line file content, use heredoc (cat << 'EOF' ... EOF), it will be recognized as one complete command
+    - For modification operations (L2+), explain what you plan to do first and wait for approval
+  free_chat_followup: "Based on the context and command results, concisely answer the human's question. Give your conclusion directly, don't repeat command output.\n\nIf you need more commands to complete the task, output them in a commands block. If you can give a final conclusion, answer directly."
+  free_chat_section_human_msg: "Human's message"
+  free_chat_section_state: "Current state"
+  free_chat_section_context: "Context"
+  free_chat_section_history: "Conversation history"
+  free_chat_section_exec_history: "Execution history"
+  free_chat_section_project_map: "Project Map (AGENTS.md)"
+  free_chat_exit_keywords: ["done", "exit", "quit"]
   observe_analyzing: "Analyzing observation targets..."
   observe_patrol: "Patrolling ({info})..."
   assess_progress: "Evaluating observations..."

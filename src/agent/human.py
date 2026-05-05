@@ -177,7 +177,7 @@ class HumanInteractionMixin:
             return
 
         if lower == "freeze":
-            self.emergency.trigger("人类手动触发")
+            self.emergency.trigger(t("pipeline.human_manual_trigger"))
             self.readonly = True
             self.chat.say(t("human.freeze_msg"), "critical")
             return
@@ -273,7 +273,7 @@ class HumanInteractionMixin:
                 # 截断避免超 token
                 limit = self.ctx_limits.conversation_incident_chars
                 if len(content) > limit:
-                    content = content[:limit] + "\n...(已截断)"
+                    content = content[:limit] + t("pipeline.truncated_marker")
                 parts.append(f"## 当前 Incident 记录\n{content}")
 
         # 最近对话历史
@@ -308,7 +308,7 @@ class HumanInteractionMixin:
         recent = self._free_chat_history[-max_rounds:]
         history_text = ""
         for entry in recent:
-            label = "人类" if entry["role"] == "human" else "Agent"
+            label = t("pipeline.role_human") if entry["role"] == "human" else t("pipeline.role_agent")
             history_text += f"\n**{label}**: {entry['content']}\n"
 
         # 涉及代码话题时注入项目地图
@@ -316,50 +316,27 @@ class HumanInteractionMixin:
         if self._is_code_related(msg):
             _map = self._load_agents_md_section(keywords=msg.split()[:10])
             if _map:
-                project_map_section = f"\n## 项目地图（AGENTS.md）\n{_map}\n"
+                project_map_section = f"\n## {t('pipeline.free_chat_section_project_map')}\n{_map}\n"
 
-        prompt = f"""人类同事给你发了一条消息。判断这是一个问题（要回答）还是一个任务（要执行）。
+        prompt = f"""{t("pipeline.free_chat_prompt")}
 
-## 当前状态
+## {t("pipeline.free_chat_section_state")}
 - 工作模式: {self.mode}
 - 只读模式: {self.readonly}
 - 暂停: {self.paused}
 - 活跃 Incident: {self.current_incident or '无'}
 
-## 上下文
+## {t("pipeline.free_chat_section_context")}
 {context}
 {project_map_section}
 
-## 对话历史
+## {t("pipeline.free_chat_section_history")}
 {history_text}
 
-## 人类的消息
+## {t("pipeline.free_chat_section_human_msg")}
 {msg}
 
-请按以下格式回答：
-
-如果是问题，并且你不需要执行命令就能回答：
-```text
-[直接回答]
-```
-
-如果你需要执行命令来回答或完成任务：
-
-先在 commands 块外面用文字简述你要做什么，然后在 commands 块中只放可以直接在终端执行的 shell 命令：
-
-我打算做以下操作：（简述）
-```commands
-可执行的shell命令1
-可执行的shell命令2
-```
-
-记住：
-- 简洁友好，不要长篇大论
-- 结合上面的上下文来理解人类的问题
-- ```commands 块中只能放可以在终端直接执行的 shell 命令，绝对不要放描述性文字、步骤说明、编号列表（如"1. 备份文件"）
-- 描述、说明、计划等文字必须放在 commands 块外面
-- 如果需要写多行文件，可以使用 heredoc（cat << 'EOF' ... EOF），它会被正确识别为一条完整命令
-- 如果是修改类操作（L2+），先说明你打算做什么，等批准
+{t("pipeline.free_chat_question_format")}
 """
 
         try:
@@ -418,15 +395,13 @@ class HumanInteractionMixin:
 ## 上下文
 {context}
 
-## 对话历史
+## {t("pipeline.free_chat_section_history")}
 {history_text}
 
-## 执行历史
+## {t("pipeline.free_chat_section_exec_history")}
 {results_summary}
 
-请基于上下文和命令结果，简洁地回答人类的问题。直接给出结论，不要重复命令输出。
-
-如果还需要执行更多命令来完成任务，用 commands 块输出。如果已经可以给出最终结论，直接回答即可。"""
+{t("pipeline.free_chat_followup")}"""
 
                 try:
                     followup_response = self._ask_llm(followup, allow_interrupt=False)
@@ -450,7 +425,7 @@ class HumanInteractionMixin:
 
             # 记录 Agent 回复到内存历史和 notebook
             total_cmds = sum(r.get("cmd_count", 0) for r in round_stats)
-            agent_record = f"执行 {len(all_round_results)} 轮共 {total_cmds} 条命令\n结论: {final_reply}"
+            agent_record = t("pipeline.agent_record", rounds=len(all_round_results), cmds=total_cmds, conclusion=final_reply)
             self._free_chat_history.append({"role": "agent", "content": agent_record})
             self.notebook.log_conversation("Agent", agent_record)
 
@@ -537,23 +512,8 @@ class HumanInteractionMixin:
 
         system = self._build_system_prompt()
         system += (
-            "\n\n## 协作排查模式规则\n"
-            "你正在和人类同事一起排查问题。你应该**主动推进排查**，不要每一步都问人类的想法。\n\n"
-            "### 输出格式\n"
-            "每次回复末尾必须附带一个意图标记（放在最后一行，独占一行）：\n\n"
-            "- `[CONTINUE]` — 你打算继续推进，不需要人类输入。\n"
-            "  适用于：读日志、查状态、收集信息、执行只读命令、分析中间结果\n\n"
-            "- `[CONFIRM]` — 你需要人类确认才能继续。\n"
-            "  适用于：执行写操作、重启服务、修改配置、方向性决策、你不确定的判断\n\n"
-            "- `[WAIT]` — 你已完成当前分析，等待人类提供新信息或新方向。\n"
-            "  适用于：排查到死胡同、需要人类提供业务背景、已给出结论等待反馈\n\n"
-            "### 行为原则\n"
-            "1. **大胆推进只读操作** —— 查看日志、检查进程、查看配置等不需要确认\n"
-            "2. **连续执行有关联的步骤** —— 比如查日志→发现错误→查相关服务状态→分析，一气呵成\n"
-            "3. **只在关键决策点停下** —— 要重启？要改配置？不确定方向？才用 [CONFIRM]\n"
-            "4. **每次回复保持简洁** —— 不要长篇大论解释你要做什么，直接做\n"
-            "5. **如果需要执行命令，用 ```commands``` 格式输出**\n\n"
-            f"## 当前上下文\n{base_context}"
+            "\n\n" + t("pipeline.collab_system_rules") +
+            f"\n\n## {t('pipeline.free_chat_section_context')}\n{base_context}"
         )
 
         waiting_for_human = True  # 初始状态等人描述问题
@@ -571,7 +531,7 @@ class HumanInteractionMixin:
                     self.chat.say(t("human.collab_timeout"), "info")
                     break
 
-                if human_input.strip().lower() in ("done", "结束", "exit", "quit"):
+                if human_input.strip().lower() in tuple(t("pipeline.free_chat_exit_keywords")):
                     self.chat.say(t("human.collab_exit"), "success")
                     break
 
@@ -589,7 +549,7 @@ class HumanInteractionMixin:
                 pending_msg = self.chat.check_inbox()
                 if pending_msg is not None:
                     pl = pending_msg.strip().lower()
-                    if pl in ("done", "结束", "exit", "quit"):
+                    if pl in tuple(t("pipeline.free_chat_exit_keywords")):
                         self.chat.say(t("human.collab_exit"), "success")
                         break
                     if pl in ("status", "pause", "resume", "stop", "freeze", "unfreeze"):
@@ -603,14 +563,10 @@ class HumanInteractionMixin:
             history_text = ""
             recent_rounds = collab_history[-self.limits.config.max_collab_history_rounds:]
             for entry in recent_rounds:
-                role_label = "人类" if entry["role"] == "human" else "Agent"
+                role_label = t("pipeline.role_human") if entry["role"] == "human" else t("pipeline.role_agent")
                 history_text += f"\n**{role_label}**: {entry['content']}\n"
 
-            prompt = f"""## 协作排查对话历史
-{history_text}
-
-请继续排查。如果需要执行命令，用 ```commands``` 格式输出。
-回复末尾附上意图标记：[CONTINUE] / [CONFIRM] / [WAIT]"""
+            prompt = t("pipeline.collab_continue_prompt", history=history_text)
 
             # ─── LLM 调用 ───
             try:
@@ -648,7 +604,7 @@ class HumanInteractionMixin:
                     self.chat.say(t("human.exec_result", result=result_text))
                     collab_history.append({
                         "role": "agent",
-                        "content": f"{text_part}\n\n执行结果：\n{result_text}",
+                        "content": t("pipeline.collab_result_append", text=text_part, result=result_text),
                     })
                     waiting_for_human = False
 
@@ -665,7 +621,7 @@ class HumanInteractionMixin:
                         self.chat.say(t("human.exec_result", result=result_text))
                         collab_history.append({
                             "role": "agent",
-                            "content": f"{text_part}\n\n执行结果：\n{result_text}",
+                            "content": t("pipeline.collab_result_append", text=text_part, result=result_text),
                         })
                         waiting_for_human = False
                     else:
@@ -687,7 +643,7 @@ class HumanInteractionMixin:
                         self.chat.say(t("human.exec_result", result=result_text))
                         collab_history.append({
                             "role": "agent",
-                            "content": f"{text_part}\n\n执行结果：\n{result_text}",
+                            "content": t("pipeline.collab_result_append", text=text_part, result=result_text),
                         })
                         # CONFIRM 后继续推进；WAIT 则等人
                         waiting_for_human = (intent == "WAIT")

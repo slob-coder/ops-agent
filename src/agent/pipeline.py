@@ -44,7 +44,7 @@ class PipelineMixin:
                 response = self._ask_llm(prompt, phase="OBSERVE")
                 commands = self._extract_commands(response)
 
-            tier_info = f"round={self._patrol_round}, {len(commands)} 条命令"
+            tier_info = t("pipeline.patrol_tier_info", round=self._patrol_round, count=len(commands))
             self.chat.progress(t("pipeline.observe_patrol", info=tier_info))
         else:
             # ── investigate/incident: LLM 围绕当前问题选择 ──
@@ -92,7 +92,7 @@ class PipelineMixin:
                         )
                         self.chat.trace(
                             "OBSERVE",
-                            f"感知漏斗发现 {len(anomalies)} 个异常信号",
+                            t("pipeline.funnel_anomalies", count=len(anomalies)),
                         )
             except Exception as e:
                 logger.debug(f"Smart assess_logs in _observe failed: {e}")
