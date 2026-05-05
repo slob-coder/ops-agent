@@ -131,7 +131,7 @@ pr_workflow:
   revert_error: "🚨 Revert error, human review needed.\nDetail: {detail}"
   revert_success: "🚨 Auto-reverted failed patch\nOriginal commit: {sha}\nReason: {reason}\nRevert PR: {pr_url}\nPlease assess root cause and decide whether to retry."
   revert_both_failed: "🚨 ⚠️ Auto-revert also failed, immediate human intervention needed!\nOriginal commit: {sha}\nFailed stage: {stage}\nError: {error}"
-  pr_body_default: "## OpsAgent auto patch\n\n{description}\n\nCommit: {sha}\n"
+  pr_body_default: "## OpsAgent auto patch\n\n{patch_description}\n\nCommit: {commit_sha}\n"
   close_auto_fix: "Auto-fix succeeded and passed production observation"
 
 agents_md:
@@ -141,6 +141,7 @@ agents_md:
   truncated: "...(truncated)"
   no_deps: "(no dependency file)"
   read_failed: "(read failed: {error})"
+  more_files_omitted: "... ({n} more files omitted)"
 
 prompt:
   none: "(none)"

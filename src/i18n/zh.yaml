@@ -131,7 +131,7 @@ pr_workflow:
   revert_error: "🚨 revert 异常，需要人类检查。\n详情：{detail}"
   revert_success: "🚨 已自动 revert 失败的补丁\n原 commit: {sha}\n原因: {reason}\nrevert PR: {pr_url}\n请人工评估根因并决定是否再次尝试修复。"
   revert_both_failed: "🚨 ⚠️ 自动 revert 也失败了，需要人工立即介入！\n原 commit: {sha}\n失败阶段: {stage}\n错误: {error}"
-  pr_body_default: "## OpsAgent auto patch\n\n{description}\n\nCommit: {sha}\n"
+  pr_body_default: "## OpsAgent auto patch\n\n{patch_description}\n\nCommit: {commit_sha}\n"
   close_auto_fix: "自动修复成功并通过生产观察"
 
 agents_md:
@@ -141,6 +141,7 @@ agents_md:
   truncated: "...(已截断)"
   no_deps: "(无依赖声明文件)"
   read_failed: "(读取失败: {error})"
+  more_files_omitted: "...（还有 {n} 个文件已省略）"
 
 prompt:
   none: "(无)"

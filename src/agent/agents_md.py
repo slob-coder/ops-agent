@@ -408,7 +408,7 @@ def _build_generation_prompt(repo: SourceRepo, context: dict) -> str:
     max_entries = 150
     for i, (rel, lines) in enumerate(tree):
         if i >= max_entries:
-            tree_text += f"\n... ({len(tree) - max_entries} more files omitted)\n"
+            tree_text += "\n" + t("agents_md.more_files_omitted", n=len(tree) - max_entries) + "\n"
             break
         tree_text += f"{lines:>6}  {rel}\n"
 
