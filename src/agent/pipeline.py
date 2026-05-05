@@ -14,6 +14,8 @@ import time
 import logging
 from datetime import datetime
 
+from src.i18n import t
+
 logger = logging.getLogger("ops-agent")
 
 
@@ -31,7 +33,7 @@ class PipelineMixin:
 
             if not commands:
                 # fallback: 没有可解析的命令时仍让 LLM 选
-                self.chat.progress("分析观察目标...")
+                self.chat.progress(t("pipeline.observe_analyzing"))
                 recent = self._recent_incidents_summary()
                 prompt = self._fill_prompt(
                     "observe",
@@ -42,11 +44,11 @@ class PipelineMixin:
                 response = self._ask_llm(prompt, phase="OBSERVE")
                 commands = self._extract_commands(response)
 
-            tier_info = f"round={self._patrol_round}, {len(commands)} 条命令"
-            self.chat.progress(f"巡检中 ({tier_info})...")
+            tier_info = t("pipeline.patrol_tier_info", round=self._patrol_round, count=len(commands))
+            self.chat.progress(t("pipeline.observe_patrol", info=tier_info))
         else:
             # ── investigate/incident: LLM 围绕当前问题选择 ──
-            self.chat.progress("分析观察目标...")
+            self.chat.progress(t("pipeline.observe_analyzing"))
             recent = self._recent_incidents_summary()
             prompt = self._fill_prompt(
                 "observe",
@@ -90,7 +92,7 @@ class PipelineMixin:
                         )
                         self.chat.trace(
                             "OBSERVE",
-                            f"感知漏斗发现 {len(anomalies)} 个异常信号",
+                            t("pipeline.funnel_anomalies", count=len(anomalies)),
                         )
             except Exception as e:
                 logger.debug(f"Smart assess_logs in _observe failed: {e}")
@@ -99,7 +101,7 @@ class PipelineMixin:
 
     def _assess(self, observations: str) -> dict:
         """判断观察结果是否正常"""
-        self.chat.progress("评估观察结果...")
+        self.chat.progress(t("pipeline.assess_progress"))
         recent = self._recent_incidents_summary()
         silences = self.notebook.read("incidents/silence.yml")
 
@@ -340,7 +342,7 @@ class PipelineMixin:
 
     def _diagnose(self, assessment: dict, observations: str) -> dict:
         """深度诊断"""
-        self.chat.progress("诊断中...")
+        self.chat.progress(t("pipeline.diagnose_progress"))
         summary = assessment.get("summary", "")
 
         # Sprint 2: 异常栈反向定位源码
@@ -354,8 +356,7 @@ class PipelineMixin:
             source_text = locate_result.render()
             top = locate_result.locations[0]
             self.chat.progress(
-                f"已定位源码: {top.repo_name}:{os.path.basename(top.local_file)}"
-                f":{top.frame.line}"
+                t("pipeline.diagnose_source_located", repo=top.repo_name, file=os.path.basename(top.local_file), line=top.frame.line)
             )
         elif parsed and parsed.frames:
             source_text = (
@@ -438,7 +439,7 @@ class PipelineMixin:
         # 解析失败时重试一次
         if result.get("hypothesis") == "JSON 解析失败，无法提取诊断":
             logger.warning("diagnose JSON 解析失败，重试一次")
-            self.chat.say("⚠️  diagnose JSON 解析失败，重试一次", "warning")
+            self.chat.say(t("pipeline.diagnose_json_retry"), "warning")
             retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字。确保 JSON 完整，不要截断。"
             response = self._ask_llm(retry_prompt, phase="DIAGNOSE_RETRY")
             result = self._parse_diagnosis(response)
@@ -447,7 +448,7 @@ class PipelineMixin:
         conf = result.get("confidence", 0)
         rtype = result.get("type", "unknown")
         hypothesis = result.get("hypothesis", "")
-        self.chat.progress(f"把握度 {conf}% | 类型: {rtype} | {hypothesis}")
+        self.chat.progress(t("pipeline.diagnose_confidence", conf=conf, rtype=rtype, hypothesis=hypothesis))
 
         return result
 
@@ -479,7 +480,7 @@ class PipelineMixin:
             self.chat.log(f"PatchLoop: repo {repo_name} 未配置 build_cmd,跳过")
             return
 
-        self.chat.say("检测到代码 bug,启动本地补丁生成与验证...", "info")
+        self.chat.say(t("pipeline.patch_bug_detected"), "info")
         try:
             verified = self.patch_loop.run(
                 diagnosis=diagnosis,
@@ -489,7 +490,7 @@ class PipelineMixin:
             )
         except Exception as e:
             logger.exception("patch loop crashed")
-            self.chat.say(f"补丁循环异常: {e}", "warning")
+            self.chat.say(t("pipeline.patch_loop_error", error=e), "warning")
             return
 
         if verified:
@@ -508,7 +509,7 @@ class PipelineMixin:
             except Exception:
                 pass
             self.chat.say(
-                f"✓ 补丁本地验证通过 ({verified.result.short_summary()})", "success"
+                t("pipeline.patch_verified", summary=verified.result.short_summary()), "success"
             )
             # 直接推送 + 部署（不走 PR 流程）
             self._deploy_patch(verified, repo)
@@ -521,7 +522,7 @@ class PipelineMixin:
                 )
             except Exception:
                 pass
-            self.chat.say("✗ 补丁循环三次都未通过,降级走常规修复", "warning")
+            self.chat.say(t("pipeline.patch_failed"), "warning")
 
     def _plan(self, diagnosis: dict):
         """制定修复方案（支持 COLLECT_MORE 多轮收集上下文）"""
@@ -530,7 +531,7 @@ class PipelineMixin:
         plan_history: list[dict] = []  # 进展检测：记录每轮的 next_action + gaps 摘要
 
         for plan_round in range(1, max_plan_rounds + 1):
-            self.chat.progress(f"制定修复方案... (第{plan_round}轮)")
+            self.chat.progress(t("pipeline.plan_progress", round=plan_round))
 
             # 找匹配的 Playbook
             hypothesis = diagnosis.get("hypothesis", "")
@@ -584,7 +585,7 @@ class PipelineMixin:
             # 解析失败时重试一次
             if plan is None:
                 logger.warning("plan 解析未返回有效计划，重试一次")
-                self.chat.say("⚠️  plan 未返回有效计划，重试一次", "warning")
+                self.chat.say(t("pipeline.plan_json_retry"), "warning")
                 retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字或代码查看请求。确保 JSON 完整，不要截断。"
                 response = self._ask_llm(retry_prompt, phase=f"PLAN_R{plan_round}_RETRY")
                 plan = self._parse_plan(response)
@@ -597,7 +598,7 @@ class PipelineMixin:
                 "gaps_desc": [g.get("description", "")[:50] for g in (plan.gaps or [])],
             })
             if self._detect_plan_stagnation(plan_history):
-                self.chat.say("⚠️ Plan 阶段连续收集相似信息，强制制定方案", "warning")
+                self.chat.say(t("pipeline.plan_stagnation"), "warning")
                 # 在 prompt 中追加强制指令，重新调用 LLM
                 force_prompt = prompt + (
                     "\n\n[重要] 你已经收集了足够的上下文信息，不要再请求更多信息。"
@@ -615,7 +616,7 @@ class PipelineMixin:
 
             # COLLECT_MORE: 执行 gap 命令，收集上下文后重新规划
             if plan.next_action == "COLLECT_MORE" and plan.gaps and plan_round < max_plan_rounds:
-                self.chat.say(f"📋 Plan 阶段收集上下文 (第{plan_round}轮)，执行 {len(plan.gaps)} 条查询命令...", "info")
+                self.chat.say(t("pipeline.plan_collecting", round=plan_round, count=len(plan.gaps)), "info")
                 new_results = self._collect_gap_commands(plan.gaps)
                 if gap_results:
                     gap_results = gap_results + "\n\n---\n\n" + new_results
@@ -625,7 +626,7 @@ class PipelineMixin:
 
             # READY 或 ESCALATE 或最后一轮 → 退出循环
             if plan and plan.next_action == "ESCALATE":
-                self.chat.say("⚠️ 修复方案超出自动执行能力，需要人工介入", "warning")
+                self.chat.say(t("pipeline.plan_beyond_auto"), "warning")
                 return None
 
             break
@@ -636,21 +637,21 @@ class PipelineMixin:
                 if plan.next_action == "COLLECT_MORE":
                     # 超过 max_plan_rounds 仍然 COLLECT_MORE → ESCALATE
                     logger.warning("plan 连续 COLLECT_MORE 超出轮次限制，升级为人工介入")
-                    self.chat.say("⚠️ 信息仍不足，无法制定修复方案，需要人工介入", "warning")
+                    self.chat.say(t("pipeline.plan_insufficient"), "warning")
                     return None
                 elif plan.next_action == "READY" and plan.verify_steps:
                     # 纯验证计划：服务已自愈，跳过执行直接验证
                     logger.info("plan READY 无修复 steps 但有 verify_steps，跳过执行进入验证")
-                    self.chat.say("✅ 服务疑似已自愈，跳过修复直接验证", "info")
+                    self.chat.say(t("pipeline.plan_self_healed"), "info")
                 elif plan.next_action == "READY":
                     logger.warning("plan READY 但无有效 steps 也没有 verify_steps")
-                    self.chat.say("⚠️ 修复方案无有效步骤，重新收集信息", "warning")
+                    self.chat.say(t("pipeline.plan_no_steps"), "warning")
                     if plan.gaps:
                         plan.next_action = "COLLECT_MORE"
                     else:
                         return None
             self.chat.say(
-                f"方案: {plan.action}  (L{plan.trust_level})",
+                t("pipeline.plan_summary", action=plan.action, trust_level=plan.trust_level),
                 "action",
             )
         return plan
@@ -836,7 +837,7 @@ class PipelineMixin:
                     f"timeout={timeout}s), retrying with longer timeout..."
                 )
                 self.chat.progress(
-                    f"步骤 {i} 超时 (尝试 {attempt}/{max_timeout_retries + 1})，延长超时重试..."
+                    t("pipeline.step_timeout_retry", step=i, attempt=attempt, max=max_timeout_retries + 1)
                 )
 
             results.append(f"STEP {i}: {cmd}\n{str(result)}")
@@ -850,7 +851,7 @@ class PipelineMixin:
                 break
 
             if wait > 0:
-                self.chat.progress(f"步骤 {i} 完成，等待 {wait}s...")
+                self.chat.progress(t("pipeline.step_complete", step=i, wait=wait))
                 self._interruptible_sleep(wait)
 
         return "\n\n".join(results), all_success
@@ -901,12 +902,12 @@ class PipelineMixin:
             default=0,
         )
         if max_delay > 0:
-            self.chat.progress(f"等待 {max_delay}s 后验证（服务启动中...）")
+            self.chat.progress(t("pipeline.verify_waiting", delay=max_delay))
             self._interruptible_sleep(max_delay)
 
         result = VerifyResult(result="UNCERTAIN")
         for attempt in range(1, max_retries + 1):
-            self.chat.progress(f"验证中... (第 {attempt}/{max_retries} 次)")
+            self.chat.progress(t("pipeline.verify_progress", attempt=attempt, max=max_retries))
 
             after_state = self._targeted_observe(plan)
 
@@ -931,7 +932,7 @@ class PipelineMixin:
                 break
 
             if result.failed and attempt < max_retries:
-                self.chat.progress(f"验证未通过，{interval}s 后重试...")
+                self.chat.progress(t("pipeline.verify_retry", interval=interval))
                 if self.current_incident:
                     self.notebook.append_to_incident(
                         self.current_incident,
@@ -991,7 +992,7 @@ class PipelineMixin:
         consecutive_pass = 0
         watch_log = []
 
-        self.chat.progress(f"进入连续观察: {duration}s, 每{interval}s采样, 需连续{required_consecutive}次通过")
+        self.chat.progress(t("pipeline.watch_enter", duration=duration, interval=interval, required=required_consecutive))
 
         for i in range(1, checks + 1):
             if i > 1:  # 第一次不需要等待
@@ -1006,7 +1007,7 @@ class PipelineMixin:
                 consecutive_pass += 1
                 if consecutive_pass >= required_consecutive:
                     self.chat.progress(
-                        f"连续观察收敛: 连续{consecutive_pass}次通过"
+                        t("pipeline.watch_converged", count=consecutive_pass)
                     )
                     evidence = "\n".join(watch_log)
                     if self.current_incident:
@@ -1022,7 +1023,7 @@ class PipelineMixin:
                 consecutive_pass = 0
                 # 检测是否恶化（比之前状态明显更差）
                 if self._is_degrading(after_state):
-                    self.chat.say("⚠️ 连续观察期间状态恶化！", "warning")
+                    self.chat.say(t("pipeline.watch_degrading"), "warning")
                     if self.current_incident:
                         self.notebook.append_to_incident(
                             self.current_incident,
@@ -1163,7 +1164,7 @@ class PipelineMixin:
         if not self.current_incident:
             return
 
-        self.chat.progress("复盘总结...")
+        self.chat.progress(t("pipeline.reflect_progress"))
         incident_record = self.notebook.read(f"incidents/active/{self.current_incident}")
         playbook_list = self.notebook.read_playbooks_summary()
 
@@ -1385,7 +1386,7 @@ class PipelineMixin:
             self._run_cmd(f"git -C {repo_path} stash drop", timeout=5)
 
         # ── 1. 合并到主分支 ──
-        self.chat.say(f"合并 {branch} → {main_branch}...", "info")
+        self.chat.say(t("pipeline.deploy_merging", branch=branch, main=main_branch), "info")
         try:
             self._run_cmd(
                 f"git -C {repo_path} checkout {main_branch}", timeout=10
@@ -1398,35 +1399,28 @@ class PipelineMixin:
                     f"git -C {repo_path} merge --abort", timeout=10
                 )
                 self.chat.notify(
-                    f"🚨 合并冲突: {branch} → {main_branch}\n"
-                    f"已中止合并，fix 分支保留在本地。\n"
-                    f"请手动合并: cd {repo_path} && git merge {branch}\n"
-                    f"补丁说明: {verified.patch.description}",
+                    t("pipeline.deploy_merge_conflict", branch=branch, main=main_branch, path=repo_path, desc=verified.patch.description),
                     "critical",
                 )
                 return
         except Exception as e:
             self.chat.notify(
-                f"🚨 分支操作失败: {e}\n"
-                f"fix 分支: {branch}，请手动处理",
+                t("pipeline.deploy_branch_failed", error=e, branch=branch),
                 "critical",
             )
             return
 
         # ── 2. 推送 ──
-        self.chat.say("推送代码...", "info")
+        self.chat.say(t("pipeline.deploy_pushing"), "info")
         try:
             self._run_cmd(f"git -C {repo_path} push", timeout=30)
-            self.chat.say(f"✓ 代码已推送 ({commit_sha[:12]})", "success")
+            self.chat.say(t("pipeline.deploy_pushed", sha=commit_sha[:12]), "success")
         except Exception as e:
             self._run_cmd(
                 f"git -C {repo_path} reset --hard ORIG_HEAD", timeout=10
             )
             self.chat.notify(
-                f"🚨 git push 失败: {e}\n"
-                f"本地已回滚到合并前状态。\n"
-                f"fix 分支 {branch} 保留在本地，请手动推送。\n"
-                f"补丁说明: {verified.patch.description}",
+                t("pipeline.deploy_push_failed", error=e, branch=branch, desc=verified.patch.description),
                 "critical",
             )
             return
@@ -1435,28 +1429,25 @@ class PipelineMixin:
         deploy_cmd = getattr(repo, "deploy_cmd", "")
         if not deploy_cmd:
             self.chat.notify(
-                f"⚠️ 代码已推送，但未配置 deploy_cmd，请手动部署。\n"
-                f"仓库: {repo_path} | commit: {commit_sha[:12]}\n"
-                f"补丁说明: {verified.patch.description}",
+                t("pipeline.deploy_no_cmd", path=repo_path, sha=commit_sha[:12], desc=verified.patch.description),
                 "warning",
             )
             return
 
-        self.chat.say(f"执行部署: {deploy_cmd}", "action")
+        self.chat.say(t("pipeline.deploy_exec", cmd=deploy_cmd), "action")
         try:
             self._run_cmd(deploy_cmd, timeout=300)
-            self.chat.say("✓ 部署命令执行完成", "success")
+            self.chat.say(t("pipeline.deploy_done"), "success")
         except Exception as e:
             self.chat.notify(
-                f"🚨 部署失败: {e}\n"
-                f"代码已推送但未生效，正在自动回滚...",
+                t("pipeline.deploy_failed", error=e),
                 "critical",
             )
-            self._rollback_deployment(repo, main_branch, commit_sha, f"部署失败: {e}")
+            self._rollback_deployment(repo, main_branch, commit_sha, t("pipeline.deploy_failed", error=e))
             return
 
         # ── 4. 验证 ──
-        self.chat.say("等待服务启动，验证修复效果...", "info")
+        self.chat.say(t("pipeline.deploy_verify_wait"), "info")
         self._interruptible_sleep(15)
 
         observations = self._observe()
@@ -1467,23 +1458,21 @@ class PipelineMixin:
 
         if is_normal:
             self.chat.notify(
-                f"✅ 自动修复成功并已部署！\n"
-                f"仓库: {repo.name} | commit: {commit_sha[:12]}\n"
-                f"补丁说明: {verified.patch.description}",
+                t("pipeline.deploy_auto_success", repo=repo.name, sha=commit_sha[:12], desc=verified.patch.description),
                 "success",
             )
             try:
-                self._close_incident("自动修复成功并通过验证")
+                self._close_incident(t("pipeline.close_auto_fix"))
             except Exception:
                 pass
         else:
             obs_hint = f"\n当前观察: {observations}" if observations else ""
             self.chat.notify(
-                f"⚠️ 部署后验证发现问题，正在自动回滚...{obs_hint}",
+                t("pipeline.deploy_post_verify_issue", hint=obs_hint),
                 "critical",
             )
             self._rollback_deployment(
-                repo, main_branch, commit_sha, "部署后验证失败"
+                repo, main_branch, commit_sha, "部署后验证失败"  # internal reason, kept as-is
             )
 
         # ── 5. 清理 fix 分支 ──
@@ -1505,14 +1494,10 @@ class PipelineMixin:
                 f"git -C {repo_path} revert --no-edit {original_sha}", timeout=10
             )
             self._run_cmd(f"git -C {repo_path} push", timeout=30)
-            self.chat.say(f"代码已回滚 (revert {original_sha[:12]})", "info")
+            self.chat.say(t("pipeline.deploy_rollback", sha=original_sha[:12]), "info")
         except Exception as e:
             self.chat.notify(
-                f"🚨 代码回滚失败！需要人工立即介入！\n"
-                f"仓库: {repo_path}\n"
-                f"失败原因: {e}\n"
-                f"原始补丁 commit: {original_sha[:12]}\n"
-                f"回滚原因: {reason}",
+                t("pipeline.deploy_rollback_failed", path=repo_path, error=e, sha=original_sha[:12], reason=reason),
                 "critical",
             )
             return
@@ -1521,23 +1506,16 @@ class PipelineMixin:
         if deploy_cmd:
             try:
                 self._run_cmd(deploy_cmd, timeout=300)
-                self.chat.say("回滚后重新部署完成", "info")
+                self.chat.say(t("pipeline.deploy_redeploy_done"), "info")
             except Exception as e:
                 self.chat.notify(
-                    f"🚨 回滚后重新部署也失败了！服务可能异常！\n"
-                    f"仓库: {repo_path}\n"
-                    f"deploy_cmd: {deploy_cmd}\n"
-                    f"错误: {e}\n"
-                    f"请立即手动检查服务状态！",
+                    t("pipeline.deploy_redeploy_failed", path=repo_path, cmd=deploy_cmd, error=e),
                     "critical",
                 )
                 return
 
         # 3. 通知人类
         self.chat.notify(
-            f"⚠️ 补丁已自动回滚\n"
-            f"原因: {reason}\n"
-            f"代码: revert {original_sha[:12]} → 已推送并重新部署\n"
-            f"请评估根因并决定是否再次尝试修复。",
+            t("pipeline.deploy_rollback_notify", reason=reason, sha=original_sha[:12]),
             "warning",
         )

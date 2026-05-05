@@ -47,9 +47,49 @@ check:
   limits_format_error: "limits.yaml format error: {error}"
   notifier_format_error: "notifier.yaml format error: {error}"
   llm_test_failed: "LLM connectivity test failed: {error}"
+  title: "🔍 OpsAgent Config Check"
+  section_llm: "1. LLM Configuration"
+  section_targets: "2. Target Configuration"
+  section_limits: "3. Blast Radius Limits"
+  section_perms: "4. Authorization Rules"
+  section_notifier: "5. IM Notifications"
+  section_llm_test: "6. LLM Connectivity"
+  result_header: "━━━ Check Results ━━━"
+  llm_no_provider_key: "LLM not configured: missing OPS_LLM_PROVIDER and OPS_LLM_API_KEY"
+  llm_no_key: "LLM not configured: missing OPS_LLM_API_KEY"
+  env_missing: ".env file not found: {path} (run ops-agent init to generate)"
+  targets_missing: "targets.yaml not found: {path}"
+  template_ref: "Template reference: {path}"
+  pyyaml_missing: "pyyaml not installed, cannot validate targets.yaml format"
+  targets_no_key: "targets.yaml missing 'targets' key"
+  targets_empty: "targets.yaml is empty, Agent will use local mode"
+  target_missing_name: "{prefix}: missing name field"
+  target_missing_type: "{prefix}: missing type field"
+  target_invalid_type: "{prefix}: type must be ssh/docker/k8s/local, got: {type}"
+  target_ssh_no_host: "{prefix}: SSH type requires host"
+  repo_missing_path: "{prefix}: missing path field"
+  target_count: "Target count: {count}"
+  limits_missing: "limits.yaml not found, built-in defaults will be used"
+  limits_empty: "limits.yaml is empty"
+  limits_not_enabled: "limits.yaml: enabled is not true, blast radius limits not active"
+  perms_missing: "permissions.md not found, Agent will use default authorization rules"
+  perms_too_short: "permissions.md is too short, consider adding authorization rules"
+  notifier_missing: "notifier.yaml not found, no IM notifications will be sent"
+  unsupported_provider: "Unsupported provider: {provider}"
+  llm_no_key_test: "Missing OPS_LLM_API_KEY, cannot test connectivity"
+  llm_test_ok: "LLM connectivity test: ✅ OK"
 
 chat:
   operation_cancelled: "Operation cancelled (from {source})."
+  approval_timeout: "Approval timed out, operation cancelled."
+  approval_received: "Approved (from {source}), proceeding."
+  rejection_received: "Operation cancelled (from {source})."
+  instruction_received: "Received your instruction (from {source}): {response}, original operation not executed."
+  approval_prompt: "I plan to execute the following:\n{action}\n   ▸ Type 'y' to approve / 'n' to reject / anything else as instruction"
+  escalate_msg: "I've encountered an issue beyond my capability, need your help:\n{summary}"
+  escalate_detail: "\nDetails: {details}"
+  banner_title: "{agent_name} — Digital Ops Worker On Duty"
+  banner_hint: "Type anytime to chat. Common commands:"
 
 notifier:
   observe_failed: "Observe function failed 3 times: {error}"
@@ -101,3 +141,239 @@ observe:
 
 patch:
   weekly_scorecard: "📊 Weekly self-review {week} — Level: {level}  Fix rate: {rate:.0f}%"
+
+human:
+  bye: "Got it, signing off. Goodbye!"
+  clear_chat: "Free chat context cleared."
+  paused: "Autonomous patrol paused. I'll still respond to your commands. Type resume to continue."
+  resumed: "Autonomous patrol resumed."
+  stopped: "Current investigation stopped, returning to patrol mode."
+  already_patrol: "I'm already in patrol mode."
+  readonly_on: "Switched to read-only mode (no modifications will be made)."
+  readonly_off: "Switched to normal mode."
+  silence_cleared: "Anomaly silence table cleared ({n} entries), next patrol will re-evaluate."
+  no_silence: "No silenced anomalies."
+  silence_header: "Silenced anomalies ({count} entries, window={window}s):"
+  silence_item: "   {fp}  {remaining}s remaining"
+  fp_usage: "Usage: fp <anomaly pattern/keyword>\nExample: fp OOM killer invoked\nEffect: marks the pattern as false positive, auto-suppresses after threshold"
+  fp_recorded: "False positive recorded: {pattern}"
+  fp_record_failed: "⚠️ Failed to record false positive: {pattern}, check logs"
+  fp_not_available: "Smart Notebook not enabled, false positive recording unavailable."
+  selffix_usage: "Usage: self-fix <problem description>\nExample: self-fix patrol anomaly path returns without sleep, repeatedly opens incidents"
+  targets_header: "Currently managed targets:"
+  target_item: "   • {name} ({mode}, {desc}){marker}"
+  target_current: " ← current"
+  switch_ok: "Switched to target {name}."
+  unknown_target: "Unknown target '{name}'. Available: {names}"
+  limits_header: "Current limits status:"
+  limits_actions: "   Action quota: this hour {used_hour}/{max_hour}, today {used_day}"
+  limits_incidents: "   Concurrent Incidents: {active}/{max}"
+  limits_tokens: "   Tokens (this hour): {used}/{budget}"
+  limits_cooldown: "   ⚠️ In failure cooldown, {remaining}s remaining"
+  freeze_msg: "🚨 Emergency freeze activated. All L2+ operations blocked. Type unfreeze to release."
+  unfreeze_msg: "Emergency freeze released, normal operations resumed."
+  playbook_list: "Current Playbooks:\n{items}"
+  playbook_empty: "No Playbooks yet."
+  trace_empty: "No trace files yet."
+  trace_header: "Trace Files"
+  trace_header_limited: "Trace Files (recent {shown} / {total} total)"
+  trace_item: "   • {name}  ({size:.1f}KB, {ts})"
+  incidents_active: "Active Incidents:\n{items}"
+  incidents_no_active: "No active incidents."
+  incidents_archive: "Recent archive (5 entries):\n{items}"
+  file_preview: "{target}:\n{preview}"
+  file_truncated: "\n...(truncated)"
+  file_not_found: "Not found: {target}"
+  collab_enter: "Entering collaborative troubleshooting mode 🤝\nI'll drive the investigation, only pausing for key decisions.\nYou can chime in anytime with additional info or direction.\nType done or exit to exit collaboration mode."
+  collab_prompt: "Enter your thoughts (type done to exit):"
+  collab_timeout: "Collaboration timed out, exiting collaboration mode."
+  collab_exit: "Exiting collaboration mode, back to normal operations."
+  collab_auto_limit: "Auto-executed {rounds} consecutive steps, pausing for your confirmation."
+  collab_unsafe_upgrade: "Execute the following commands (contain write operations, need confirmation):\n{cmd_list}"
+  collab_confirm_cmds: "Execute the following commands:\n{cmd_list}"
+  exec_result: "Execution results:\n{result}"
+  cmd_rejected: "(Commands rejected by human)"
+  thinking: "Thinking about your request..."
+  llm_error: "LLM error: {error}"
+  will_execute: "I plan to execute {count} commands to answer you..."
+  continue_round: "Continuing execution (round {round})..."
+  new_interrupt: "New instruction received, stopping current task."
+  max_rounds_done: "Executed {rounds} rounds, task may not be complete. Current conclusion:\n{conclusion}"
+  no_context: "(No historical context)"
+  truncated_omitted: "(Previous results omitted)"
+  llm_unavailable: "LLM unavailable, exiting collaboration mode."
+  status_title: "Current status:"
+  status_mode: "   Mode: {mode}"
+  status_target: "   Current target: {name} ({type})"
+  status_targets: "   All targets: {targets}"
+  status_paused_yes: "   Paused: Yes"
+  status_paused_no: "   Paused: No"
+  status_readonly_yes: "   Read-only: Yes"
+  status_readonly_no: "   Read-only: No"
+  status_active: "   Active Incidents: {count}"
+  status_archived: "   Archived Incidents: {count}"
+  status_playbooks: "   Playbooks: {count}"
+  status_quota: "   Action quota (this hour): {used}/{max}"
+  status_issue: "   Current issue: {issue}"
+  status_cooldown: "\n   ⚠️ In failure cooldown, {remaining}s remaining"
+  status_frozen: "\n   🚨 Emergency freeze active"
+  status_smart_title: "\n   📊 Smart Notebook:"
+  status_smart_links: "      Knowledge links: {count}"
+  status_smart_fp: "      FP suppressed: {count} patterns"
+  status_smart_insights: "      Durable insights: {count}"
+  status_smart_trust: "      Trust level: {level}"
+  scorecard_empty: "No Scorecard data yet. Auto-generated weekly in Smart Notebook mode."
+  trust_level: "Trust level: {level}"
+  trust_limit: "   {key}: {value}"
+  trust_need_smart: "Trust evolution requires Smart Notebook extension."
+  selffix_frozen: "🚨 Self-repair is frozen (EMERGENCY_STOP_SELF_MODIFY exists).\nReason:\n{reason}\nDelete the file after human confirmation to resume."
+  selffix_no_path: "Self-repair not configured. Set OPS_AGENT_SELFDEV_PATH to a separate ops-agent git workspace (must differ from running directory)."
+  selffix_no_loop: "PatchLoop not initialized, cannot self-repair. Check startup logs."
+  selffix_load_failed: "Self-repair module load failed: {error}"
+  selffix_success: "Self-repair succeeded: {reason}\nBranch: {branch}\npre-tag: {pre_tag}"
+  selffix_incomplete: "Self-repair incomplete: {reason}"
+  help_text: |
+    Available commands:
+       ─── Control ───
+       status        View current status
+       pause         Pause autonomous patrol
+       resume        Resume autonomous patrol
+       stop          Stop current investigation, return to patrol
+       readonly on/off  Toggle read-only mode
+       freeze        Emergency freeze (block all L2+ operations)
+       unfreeze      Release emergency freeze
+       silence       View silenced anomaly fingerprints
+       clear silence Clear silence table, re-evaluate next patrol
+       fp <pattern>  Mark anomaly pattern as false positive (Smart Notebook)
+       scorecard (growth/成长)  View growth scorecard
+       trust (信任)             View current trust level
+       new / clear chat / 清除对话   Clear free chat context
+       collab (协作)  Enter collaborative troubleshooting (human + Agent)
+       self-fix <desc>  Trigger a self-repair session (modify ops-agent itself)
+       quit          Sign off
+       ─── Multi-target ───
+       targets (lt)          List all managed targets
+       switch <target>       Switch active target
+       limits                View limits/quota status
+       ─── Browse ───
+       list playbook (lp)    List all Playbooks
+       list incidents (li)   List Incidents
+       list trace (lt)       List Trace files
+       show <filename>       View a Notebook file
+       ─── Free Chat ───
+       Just type a question or task, I'll figure it out.
+
+pipeline:
+  patrol_tier_info: "round={round}, {count} commands"
+  funnel_anomalies: "Perception funnel detected {count} anomaly signals"
+  agent_record: "Executed {rounds} rounds, {cmds} commands total\nConclusion: {conclusion}"
+  human_manual_trigger: "Human manual trigger"
+  truncated_marker: "\n...(truncated)"
+  collab_system_rules: |
+    ## Collaborative Troubleshooting Mode Rules
+    You are troubleshooting together with a human colleague. You should **proactively drive the investigation** — don't ask the human for input at every step.
+
+    ### Output Format
+    Each response must end with an intent marker (on its own line, as the last line):
+
+    - `[CONTINUE]` — You want to keep going, no human input needed.
+      Use for: reading logs, checking status, gathering info, running read-only commands, analyzing intermediate results
+
+    - `[CONFIRM]` — You need human confirmation before proceeding.
+      Use for: write operations, restarting services, modifying configs, directional decisions, uncertain judgments
+
+    - `[WAIT]` — You've finished your current analysis, waiting for the human to provide new info or direction.
+      Use for: hit a dead end, need business context from human, already gave conclusion awaiting feedback
+
+    ### Behavioral Principles
+    1. **Boldly proceed with read-only operations** — checking logs, processes, configs doesn't need confirmation
+    2. **Execute related steps in sequence** — e.g., check logs → find error → check related service status → analyze, all in one go
+    3. **Only stop at key decision points** — restart? change config? unsure of direction? → use [CONFIRM]
+    4. **Keep each response concise** — don't write essays about what you'll do, just do it
+    5. **If you need to run commands, output them in ```commands``` format**
+  collab_continue_prompt: "## Collaborative Troubleshooting History\n{history}\n\nContinue the investigation. If you need to run commands, output them in ```commands``` format.\nEnd your response with an intent marker: [CONTINUE] / [CONFIRM] / [WAIT]"
+  collab_result_append: "{text}\n\nExecution results:\n{result}"
+  role_human: "Human"
+  role_agent: "Agent"
+  free_chat_prompt: |
+    A human colleague sent you a message. Determine whether this is a question (to answer) or a task (to execute).
+  free_chat_question_format: |
+    If it's a question and you can answer without running commands:
+    ```text
+    [direct answer]
+    ```
+
+    If you need to run commands to answer or complete the task:
+
+    First briefly describe what you'll do outside the commands block, then put directly executable shell commands in the commands block:
+
+    I plan to do the following: (brief description)
+    ```commands
+    executable_shell_command1
+    executable_shell_command2
+    ```
+
+    Remember:
+    - Be concise and friendly, don't write essays
+    - Use the context above to understand the human's question
+    - ```commands blocks can only contain directly executable shell commands — absolutely no descriptions, step explanations, or numbered lists (like "1. Backup file")
+    - Descriptions, explanations, plans etc. must go outside the commands block
+    - For multi-line file content, use heredoc (cat << 'EOF' ... EOF), it will be recognized as one complete command
+    - For modification operations (L2+), explain what you plan to do first and wait for approval
+  free_chat_followup: "Based on the context and command results, concisely answer the human's question. Give your conclusion directly, don't repeat command output.\n\nIf you need more commands to complete the task, output them in a commands block. If you can give a final conclusion, answer directly."
+  free_chat_section_human_msg: "Human's message"
+  free_chat_section_state: "Current state"
+  free_chat_section_context: "Context"
+  free_chat_section_history: "Conversation history"
+  free_chat_section_exec_history: "Execution history"
+  free_chat_section_project_map: "Project Map (AGENTS.md)"
+  free_chat_exit_keywords: ["done", "exit", "quit"]
+  observe_analyzing: "Analyzing observation targets..."
+  observe_patrol: "Patrolling ({info})..."
+  assess_progress: "Evaluating observations..."
+  diagnose_progress: "Diagnosing..."
+  diagnose_source_located: "Source located: {repo}:{file}:{line}"
+  diagnose_stack_no_map: "(Detected {lang} stack trace with {frames} frames, but could not map to local source; check targets.yaml source_repos config)"
+  diagnose_json_retry: "⚠️  diagnose JSON parse failed, retrying"
+  diagnose_confidence: "Confidence {conf}% | Type: {rtype} | {hypothesis}"
+  patch_bug_detected: "Code bug detected, starting local patch generation and verification..."
+  patch_loop_error: "Patch loop error: {error}"
+  patch_verified: "✓ Patch locally verified ({summary})"
+  patch_failed: "✗ Patch loop failed 3 times, falling back to normal repair"
+  plan_progress: "Creating fix plan... (round {round})"
+  plan_json_retry: "⚠️  plan returned no valid plan, retrying"
+  plan_stagnation: "⚠️ Plan phase collecting similar info repeatedly, forcing a plan"
+  plan_collecting: "📋 Plan phase collecting context (round {round}), executing {count} queries..."
+  plan_beyond_auto: "⚠️ Fix plan exceeds autonomous execution capability, human intervention needed"
+  plan_insufficient: "⚠️ Insufficient info to create fix plan, human intervention needed"
+  plan_self_healed: "✅ Service appears to have self-healed, skipping fix and going to verification"
+  plan_no_steps: "⚠️ Fix plan has no valid steps, re-collecting info"
+  plan_summary: "Plan: {action}  (L{trust_level})"
+  step_timeout_retry: "Step {step} timed out (attempt {attempt}/{max}), retrying with longer timeout..."
+  step_complete: "Step {step} complete, waiting {wait}s..."
+  verify_waiting: "Waiting {delay}s before verification (service starting...)"
+  verify_progress: "Verifying... (attempt {attempt}/{max})"
+  verify_retry: "Verification failed, retrying in {interval}s..."
+  watch_enter: "Entering continuous observation: {duration}s, sampling every {interval}s, {required} consecutive passes required"
+  watch_converged: "Continuous observation converged: {count} consecutive passes"
+  watch_degrading: "⚠️ State degraded during continuous observation!"
+  reflect_progress: "Reflecting..."
+  deploy_merging: "Merging {branch} → {main}..."
+  deploy_pushing: "Pushing code..."
+  deploy_pushed: "✓ Code pushed ({sha})"
+  deploy_exec: "Executing deployment: {cmd}"
+  deploy_done: "✓ Deploy command completed"
+  deploy_verify_wait: "Waiting for service to start, verifying fix..."
+  deploy_auto_success: "✅ Auto-fix successful and deployed!\nRepo: {repo} | commit: {sha}\nPatch: {desc}"
+  deploy_no_cmd: "⚠️ Code pushed but deploy_cmd not configured, please deploy manually.\nRepo: {path} | commit: {sha}\nPatch: {desc}"
+  deploy_merge_conflict: "🚨 Merge conflict: {branch} → {main}\nMerge aborted, fix branch preserved locally.\nMerge manually: cd {path} && git merge {branch}\nPatch: {desc}"
+  deploy_branch_failed: "🚨 Branch operation failed: {error}\nFix branch: {branch}, please handle manually"
+  deploy_push_failed: "🚨 git push failed: {error}\nRolled back to pre-merge state locally.\nFix branch {branch} preserved locally, please push manually.\nPatch: {desc}"
+  deploy_failed: "🚨 Deploy failed: {error}\nCode pushed but not live, auto-rolling back..."
+  deploy_post_verify_issue: "⚠️ Post-deploy verification found issues, auto-rolling back...{hint}"
+  deploy_rollback: "Code rolled back (revert {sha})"
+  deploy_redeploy_done: "Redeployed after rollback"
+  deploy_rollback_failed: "🚨 Code rollback failed! Immediate human intervention needed!\nRepo: {path}\nFailure reason: {error}\nOriginal patch commit: {sha}\nRollback reason: {reason}"
+  deploy_redeploy_failed: "🚨 Redeploy after rollback also failed! Service may be down!\nRepo: {path}\ndeploy_cmd: {cmd}\nError: {error}\nPlease manually check service status immediately!"
+  deploy_rollback_notify: "⚠️ Patch auto-rolled back\nReason: {reason}\nCode: revert {sha} → pushed and redeployed\nPlease assess root cause and decide whether to retry."
+  close_auto_fix: "Auto-fix succeeded and passed verification"

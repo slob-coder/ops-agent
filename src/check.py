@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from src.i18n import t
+
 try:
     import yaml
 except ImportError:
@@ -57,11 +59,11 @@ class CheckResult:
         print()
         if self.ok:
             if self.warnings:
-                print("✅ 配置基本完整，有警告项建议处理")
+                print(t("check.config_ok_warn"))
             else:
-                print("✅ 配置完整，可以启动")
+                print(t("check.config_ok"))
         else:
-            print(f"❌ 配置有 {len(self.errors)} 个错误，请修复后重试")
+            print(t("check.config_error", count=len(self.errors)))
 
 
 def _load_env_file(env_path: Path) -> dict:
@@ -98,11 +100,11 @@ def check_env(workspace: str, result: CheckResult):
     base_url = os.environ.get("OPS_LLM_BASE_URL") or env.get("OPS_LLM_BASE_URL", "")
 
     if not provider and not api_key:
-        result.error("LLM 未配置: 缺少 OPS_LLM_PROVIDER 和 OPS_LLM_API_KEY")
+        result.error(t("check.llm_no_provider_key"))
         return
 
     if not api_key:
-        result.error("LLM 未配置: 缺少 OPS_LLM_API_KEY")
+        result.error(t("check.llm_no_key"))
     else:
         result.info(f"LLM Provider: {provider or 'anthropic'}")
         result.info(f"LLM Model: {model or '(default)'}")
@@ -110,7 +112,7 @@ def check_env(workspace: str, result: CheckResult):
             result.info(f"LLM Base URL: {base_url}")
 
     if not env_path.exists():
-        result.warn(f".env 文件不存在: {env_path} (运行 ops-agent init 生成)")
+        result.warn(t("check.env_missing", path=env_path))
 
 
 def check_targets(notebook_path: str, result: CheckResult):
@@ -121,29 +123,29 @@ def check_targets(notebook_path: str, result: CheckResult):
     if not targets_path.exists():
         # 检查 example
         example_path = Path(__file__).parent.parent / "templates" / "targets.example.yaml"
-        result.error(f"targets.yaml 不存在: {targets_path}")
+        result.error(t("check.targets_missing", path=targets_path))
         if example_path.exists():
-            result.info(f"参考模板: {example_path}")
+            result.info(t("check.template_ref", path=example_path))
         return
 
     if yaml is None:
-        result.warn("pyyaml 未安装，无法校验 targets.yaml 格式")
+        result.warn(t("check.pyyaml_missing"))
         return
 
     try:
         with open(targets_path) as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        result.error(f"targets.yaml 格式错误: {e}")
+        result.error(t("check.targets_format_error", error=e))
         return
 
     if not data or "targets" not in data:
-        result.error("targets.yaml 缺少 'targets' 键")
+        result.error(t("check.targets_no_key"))
         return
 
     targets = data["targets"]
     if not targets:
-        result.warn("targets.yaml 为空，Agent 将使用本机模式")
+        result.warn(t("check.targets_empty"))
         return
 
     for i, t in enumerate(targets):
@@ -152,21 +154,21 @@ def check_targets(notebook_path: str, result: CheckResult):
         prefix = f"target '{name}'"
 
         if not t.get("name"):
-            result.error(f"{prefix}: 缺少 name 字段")
+            result.error(t("check.target_missing_name", prefix=prefix))
         if not t.get("type"):
-            result.error(f"{prefix}: 缺少 type 字段")
+            result.error(t("check.target_missing_type", prefix=prefix))
         elif t["type"] not in ("ssh", "docker", "k8s", "local"):
-            result.error(f"{prefix}: type 必须是 ssh/docker/k8s/local，当前: {t['type']}")
+            result.error(t("check.target_invalid_type", prefix=prefix, type=t['type']))
 
         if t.get("type") == "ssh" and not t.get("host"):
-            result.error(f"{prefix}: SSH 类型必须配置 host")
+            result.error(t("check.target_ssh_no_host", prefix=prefix))
 
         for repo in t.get("source_repos", []):
             repo_prefix = f"{prefix}.source_repos[{repo.get('name', '?')}]"
             if not repo.get("path"):
-                result.error(f"{repo_prefix}: 缺少 path 字段")
+                result.error(t("check.repo_missing_path", prefix=repo_prefix))
 
-    result.info(f"目标数量: {len(targets)}")
+    result.info(t("check.target_count", count=len(targets)))
     for t in targets:
         ttype = t.get("type", "?")
         tname = t.get("name", "?")
@@ -179,7 +181,7 @@ def check_limits(notebook_path: str, result: CheckResult):
     limits_path = config_dir / "limits.yaml"
 
     if not limits_path.exists():
-        result.warn("limits.yaml 不存在，将使用内置默认值")
+        result.warn(t("check.limits_missing"))
         return
 
     if yaml is None:
@@ -189,15 +191,15 @@ def check_limits(notebook_path: str, result: CheckResult):
         with open(limits_path) as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        result.error(f"limits.yaml 格式错误: {e}")
+        result.error(t("check.limits_format_error", error=e))
         return
 
     if not data:
-        result.warn("limits.yaml 为空")
+        result.warn(t("check.limits_empty"))
         return
 
     if data.get("enabled") is not True:
-        result.warn("limits.yaml: enabled 不是 true，爆炸半径限制未启用")
+        result.warn(t("check.limits_not_enabled"))
 
     result.info(f"limits: enabled={data.get('enabled')}, "
                 f"max_actions/hour={data.get('max_actions_per_hour', '?')}")
@@ -209,11 +211,11 @@ def check_permissions(notebook_path: str, result: CheckResult):
     perm_path = config_dir / "permissions.md"
 
     if not perm_path.exists():
-        result.warn("permissions.md 不存在，Agent 将使用默认授权规则")
+        result.warn(t("check.perms_missing"))
     else:
         content = perm_path.read_text()
         if len(content) < 50:
-            result.warn("permissions.md 内容过短，建议补充授权规则")
+            result.warn(t("check.perms_too_short"))
         else:
             result.info("permissions.md ✓")
 
@@ -224,7 +226,7 @@ def check_notifier(notebook_path: str, result: CheckResult):
     notifier_path = config_dir / "notifier.yaml"
 
     if not notifier_path.exists():
-        result.info("notifier.yaml 不存在，不发送 IM 通知")
+        result.info(t("check.notifier_missing"))
         return
 
     if yaml is None:
@@ -234,7 +236,7 @@ def check_notifier(notebook_path: str, result: CheckResult):
         with open(notifier_path) as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        result.error(f"notifier.yaml 格式错误: {e}")
+        result.error(t("check.notifier_format_error", error=e))
         return
 
     ntype = data.get("type", "none") if data else "none"
@@ -254,11 +256,11 @@ def check_llm_connection(result: CheckResult):
     }
 
     if provider not in PROVIDER_DEFAULTS:
-        result.error(f"不支持的 provider: {provider}")
+        result.error(t("check.unsupported_provider", provider=provider))
         return
 
     if not api_key:
-        result.error("缺少 OPS_LLM_API_KEY，无法测试连通性")
+        result.error(t("check.llm_no_key_test"))
         return
 
     defaults = PROVIDER_DEFAULTS[provider]
@@ -280,9 +282,9 @@ def check_llm_connection(result: CheckResult):
             client = openai.OpenAI(**kwargs)
             client.chat.completions.create(model=model, max_tokens=10,
                                            messages=[{"role": "user", "content": "Say OK"}])
-        result.info("LLM 连通性测试: ✅ OK")
+        result.info(t("check.llm_test_ok"))
     except Exception as e:
-        result.error(f"LLM 连通性测试失败: {e}")
+        result.error(t("check.llm_test_failed", error=e))
 
 
 def run_check(workspace_path: str = "~/.ops-agent", test_llm: bool = False):
@@ -293,7 +295,7 @@ def run_check(workspace_path: str = "~/.ops-agent", test_llm: bool = False):
     result = CheckResult()
 
     print()
-    print("🔍 OpsAgent 配置校验")
+    print(t("check.title"))
     print("━━━━━━━━━━━━━━━━━━━━")
     print()
 
@@ -308,32 +310,32 @@ def run_check(workspace_path: str = "~/.ops-agent", test_llm: bool = False):
         if key not in os.environ:
             os.environ[key] = value
 
-    print("1. LLM 配置")
+    print(t("check.section_llm"))
     check_env(str(workspace), result)
 
     print()
-    print("2. 目标配置")
+    print(t("check.section_targets"))
     check_targets(notebook_path, result)
 
     print()
-    print("3. 爆炸半径限制")
+    print(t("check.section_limits"))
     check_limits(notebook_path, result)
 
     print()
-    print("4. 授权规则")
+    print(t("check.section_perms"))
     check_permissions(notebook_path, result)
 
     print()
-    print("5. IM 通知")
+    print(t("check.section_notifier"))
     check_notifier(notebook_path, result)
 
     if test_llm and result.ok:
         print()
-        print("6. LLM 连通性")
+        print(t("check.section_llm_test"))
         check_llm_connection(result)
 
     print()
-    print("━━━ 校验结果 ━━━")
+    print(t("check.result_header"))
     result.print_report()
 
     if not result.ok:
