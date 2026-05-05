@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 from typing import Optional, List
 
+from src.i18n import t
 from src.infra.channel_backend import ChannelBackend
 
 logger = logging.getLogger("ops-agent.chat")
@@ -207,8 +208,7 @@ class ConsoleBackend(ChannelBackend):
 
     def request_approval(self, action_description: str) -> None:
         self.send(
-            f"我打算执行以下操作：\n{action_description}\n"
-            f"   ▸ 输入 'y' 批准 / 'n' 否决 / 其他作为指示",
+            t("chat.approval_prompt", action=action_description),
             urgency="warning",
         )
 
@@ -367,7 +367,7 @@ class HumanChannel:
         try:
             response_item = self._approval_queue.get(timeout=600)
         except queue.Empty:
-            self.say("等待超时，取消操作。", "warning")
+            self.say(t("chat.approval_timeout"), "warning")
             return False
         finally:
             self._set_waiting_approval(False)
@@ -382,13 +382,13 @@ class HumanChannel:
         response_lower = response.strip().lower()
 
         if response_lower in ("y", "yes", "approve", "ok", "确认", "批准", "同意"):
-            self.say(f"收到批准（来自 {source}），开始执行。", "success")
+            self.say(t("chat.approval_received", source=source), "success")
             return True
         elif response_lower in ("n", "no", "deny", "cancel", "拒绝", "否决", "不"):
-            self.say(f"操作已取消（来自 {source}）。", "info")
+            self.say(t("chat.rejection_received", source=source), "info")
             return False
         else:
-            self.say(f"收到你的指示（来自 {source}）：{response}，原操作暂不执行。", "info")
+            self.say(t("chat.instruction_received", source=source, response=response), "info")
             self.inbox.put(response)
             self.interrupted.set()
             return False
@@ -414,9 +414,9 @@ class HumanChannel:
 
     def escalate(self, summary: str, details: str = ""):
         """升级给人类"""
-        msg = f"遇到超出我能力的问题，需要你的帮助：\n{summary}"
+        msg = t("chat.escalate_msg", summary=summary)
         if details:
-            msg += f"\n详情：{details}"
+            msg += t("chat.escalate_detail", details=details)
         self.say(msg, urgency="critical")
 
     def _set_waiting_approval(self, value: bool):
@@ -446,18 +446,20 @@ class HumanChannel:
         """启动横幅"""
         mode_hint = ""
         if self._console_backend and self._console_backend.mode != "interactive":
-            mode_hint = f"  {Color.YELLOW}(基础模式，建议 pip install prompt_toolkit){Color.RESET}"
+            mode_hint = f"  {Color.YELLOW}(basic mode, pip install prompt_toolkit recommended){Color.RESET}"
 
         backend_names = ", ".join(type(b).__name__ for b in self.backends)
+        banner_title = t("chat.banner_title", agent_name=agent_name)
+        banner_hint = t("chat.banner_hint")
 
         with self._console_backend._output_lock if self._console_backend else self._output_lock:
             print(f"""
 {Color.CYAN}╭───────────────────────────────────────────────────────╮
-│  {Color.BOLD}{agent_name}{Color.RESET}{Color.CYAN} — 数字运维员工已上岗                   │
+│  {Color.BOLD}{banner_title}{Color.RESET}{Color.CYAN}                   │
 │                                                       │
 │  交互通道: {Color.YELLOW}{backend_names}{Color.RESET}                              │
 │                                                       │
-│  随时打字和我对话。常用指令：                            │
+│  {banner_hint}                            │
 │    {Color.YELLOW}status{Color.CYAN}    查看我的状态                              │
 │    {Color.YELLOW}pause{Color.CYAN}     暂停我的自主行动                           │
 │    {Color.YELLOW}resume{Color.CYAN}    恢复自主行动                              │

@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+from src.i18n import t
 from src.infra.llm import LLMDegraded
 
 logger = logging.getLogger("ops-agent")
@@ -24,7 +25,7 @@ class HumanInteractionMixin:
         # ═══ 控制指令 ═══
 
         if lower in ("quit", "exit", "bye", ":q"):
-            self.chat.say("收到，下班了。再见！", "info")
+            self.chat.say(t("human.bye"), "info")
             self._running = False
             return
 
@@ -38,53 +39,53 @@ class HumanInteractionMixin:
 
         if lower in ("new", "clear chat", "清除对话"):
             self._free_chat_history.clear()
-            self.chat.say("已清除自由对话上下文。", "info")
+            self.chat.say(t("human.clear_chat"), "info")
             return
 
         if lower == "pause":
             self.paused = True
-            self.chat.say("已暂停自主巡检。我会继续响应你的指令。输入 resume 恢复。", "info")
+            self.chat.say(t("human.paused"), "info")
             return
 
         if lower == "resume":
             self.paused = False
-            self.chat.say("已恢复自主巡检。", "success")
+            self.chat.say(t("human.resumed"), "success")
             return
 
         if lower == "stop":
             if self.mode != self.PATROL:
                 self.mode = self.PATROL
                 self.current_issue = ""
-                self.chat.say("已停止当前调查，回到巡检模式。", "info")
+                self.chat.say(t("human.stopped"), "info")
             else:
-                self.chat.say("我现在就在巡检中。", "info")
+                self.chat.say(t("human.already_patrol"), "info")
             return
 
         if lower == "readonly on":
             self.readonly = True
-            self.chat.say("已切换到只读模式（不会执行任何修改操作）。", "info")
+            self.chat.say(t("human.readonly_on"), "info")
             return
 
         if lower == "readonly off":
             self.readonly = False
-            self.chat.say("已切换到正常模式。", "info")
+            self.chat.say(t("human.readonly_off"), "info")
             return
 
         if lower in ("clear silence", "unmute", "clear-silence"):
             n = len(self._issue_fingerprints)
             self._issue_fingerprints.clear()
-            self.chat.say(f"已清空异常静默表({n} 条),下一轮巡检会重新判断。", "info")
+            self.chat.say(t("human.silence_cleared", n=n), "info")
             return
 
         if lower in ("show silence", "silence"):
             if not self._issue_fingerprints:
-                self.chat.say("当前无静默中的异常。", "info")
+                self.chat.say(t("human.no_silence"), "info")
             else:
                 now_ts = time.time()
-                lines = [f"静默中的异常({len(self._issue_fingerprints)} 条,窗口={self._silence_window_seconds}s):"]
+                lines = [t("human.silence_header", count=len(self._issue_fingerprints), window=self._silence_window_seconds)]
                 for fp, ts in sorted(self._issue_fingerprints.items(), key=lambda x: x[1], reverse=True):
                     remaining = max(0, int(self._silence_window_seconds - (now_ts - ts)))
-                    lines.append(f"   {fp}  剩余 {remaining}s")
+                    lines.append(t("human.silence_item", fp=fp, remaining=remaining))
                 self.chat.say("\n".join(lines), "info")
             return
 
@@ -93,9 +94,7 @@ class HumanInteractionMixin:
             pattern = msg.split(None, 1)[1].strip() if len(msg.split(None, 1)) > 1 else ""
             if not pattern:
                 self.chat.say(
-                    "用法: fp <异常模式/关键词>\n"
-                    "例: fp OOM killer invoked\n"
-                    "效果: 标记该模式为误报,达到阈值后自动抑制",
+                    t("human.fp_usage"),
                     "info",
                 )
                 return
@@ -106,14 +105,14 @@ class HumanInteractionMixin:
                     context=f"human marked at {datetime.now().isoformat()}",
                 )
                 if result:
-                    self.chat.say(f"已记录误报: {pattern}", "info")
+                    self.chat.say(t("human.fp_recorded", pattern=pattern), "info")
                     # 成长统计打点
                     if hasattr(self, "_weekly_stats"):
                         self._weekly_stats["fp"] += 1
                 else:
-                    self.chat.say(f"⚠️ 误报记录失败: {pattern}，请检查日志", "warning")
+                    self.chat.say(t("human.fp_record_failed", pattern=pattern), "warning")
             else:
-                self.chat.say("当前未启用 Smart Notebook,误报记录不可用。", "info")
+                self.chat.say(t("human.fp_not_available"), "info")
             return
 
         # ═══ Smart 成长命令 ═══
@@ -133,8 +132,7 @@ class HumanInteractionMixin:
             description = parts[1].strip() if len(parts) > 1 else ""
             if not description:
                 self.chat.say(
-                    "用法: self-fix <问题描述>\n"
-                    "例: self-fix 巡检异常路径 return 后没 sleep,反复开 incident",
+                    t("human.selffix_usage"),
                     "info"
                 )
                 return
@@ -144,50 +142,50 @@ class HumanInteractionMixin:
         # ═══ 多目标管理指令 ═══
 
         if lower in ("targets", "list targets", "lt"):
-            lines = ["当前管理的目标:"]
-            for t in self.targets:
-                marker = " ← 当前" if t.name == self.current_target.name else ""
-                lines.append(f"   • {t.name} ({t.mode}, {t.description or '-'}){marker}")
+            lines = [t("human.targets_header")]
+            for t_item in self.targets:
+                marker = t("human.target_current") if t_item.name == self.current_target.name else ""
+                lines.append(t("human.target_item", name=t_item.name, mode=t_item.mode, desc=t_item.description or '-', marker=marker))
             self.chat.say("\n".join(lines))
             return
 
         if lower.startswith("switch "):
             name = msg[7:].strip()
             if self._switch_target(name):
-                self.chat.say(f"已切换到目标 {name}。", "success")
+                self.chat.say(t("human.switch_ok", name=name), "success")
                 # 重置目标轮询索引,让下次 round-robin 从这里开始
                 for i, t in enumerate(self.targets):
                     if t.name == name:
                         self._target_index = i
                         break
             else:
-                names = ", ".join(t.name for t in self.targets)
-                self.chat.say(f"未知目标 '{name}'。可用目标: {names}", "warning")
+                names = ", ".join(t_item.name for t_item in self.targets)
+                self.chat.say(t("human.unknown_target", name=name, names=names), "warning")
             return
 
         # ═══ 限制和安全指令 ═══
 
         if lower == "limits":
             s = self.limits.status()
-            lines = ["当前限制状态:"]
-            lines.append(f"   动作配额: 本小时 {s['actions_last_hour']}/{s['max_actions_per_hour']}, 今日 {s['actions_last_day']}")
-            lines.append(f"   并发 Incident: {s['active_incidents']}/{s['max_concurrent']}")
-            lines.append(f"   Token(本小时): {s['tokens_last_hour']}/{s['tokens_per_hour_budget']}")
+            lines = [t("human.limits_header")]
+            lines.append(t("human.limits_actions", used_hour=s['actions_last_hour'], max_hour=s['max_actions_per_hour'], used_day=s['actions_last_day']))
+            lines.append(t("human.limits_incidents", active=s['active_incidents'], max=s['max_concurrent']))
+            lines.append(t("human.limits_tokens", used=s['tokens_last_hour'], budget=s['tokens_per_hour_budget']))
             if s['in_cooldown']:
-                lines.append(f"   ⚠️ 失败冷却中,还需 {s['cooldown_remaining']} 秒")
+                lines.append(t("human.limits_cooldown", remaining=s['cooldown_remaining']))
             self.chat.say("\n".join(lines))
             return
 
         if lower == "freeze":
             self.emergency.trigger("人类手动触发")
             self.readonly = True
-            self.chat.say("🚨 已紧急冻结。所有 L2+ 操作被禁止。输入 unfreeze 解除。", "critical")
+            self.chat.say(t("human.freeze_msg"), "critical")
             return
 
         if lower == "unfreeze":
             self.emergency.clear()
             self.readonly = False
-            self.chat.say("已解除紧急冻结,恢复正常操作。", "success")
+            self.chat.say(t("human.unfreeze_msg"), "success")
             return
 
         # ═══ Notebook 浏览指令 ═══
@@ -195,19 +193,19 @@ class HumanInteractionMixin:
         if lower in ("list playbook", "list playbooks", "lp"):
             files = self.notebook.list_dir("playbook")
             if files:
-                self.chat.say("当前 Playbook：\n" + "\n".join(f"   • {f}" for f in files))
+                self.chat.say(t("human.playbook_list", items="\n".join(f"   • {f}" for f in files)))
             else:
-                self.chat.say("还没有 Playbook。")
+                self.chat.say(t("human.playbook_empty"))
             return
 
         if lower in ("list trace", "list traces", "lt"):
             trace_dir = self.notebook.path / "trace"
             if not trace_dir.exists():
-                self.chat.say("还没有 trace 文件。")
+                self.chat.say(t("human.trace_empty"))
                 return
             files = sorted(trace_dir.glob("*.md"), key=lambda f: f.stat().st_mtime, reverse=True)
             if not files:
-                self.chat.say("还没有 trace 文件。")
+                self.chat.say(t("human.trace_empty"))
                 return
             lines = []
             for f in files[:20]:
@@ -215,10 +213,10 @@ class HumanInteractionMixin:
                 mtime = f.stat().st_mtime
                 from datetime import datetime
                 ts = datetime.fromtimestamp(mtime).strftime("%m-%d %H:%M")
-                lines.append(f"   • {f.name}  ({size_kb:.1f}KB, {ts})")
-            header = "Trace 文件"
+                lines.append(t("human.trace_item", name=f.name, size=size_kb, ts=ts))
+            header = t("human.trace_header")
             if len(files) > 20:
-                header += f"（最近 20 / 共 {len(files)} 条）"
+                header = t("human.trace_header_limited", shown=20, total=len(files))
             self.chat.say(f"{header}：\n" + "\n".join(lines))
             return
 
@@ -227,12 +225,12 @@ class HumanInteractionMixin:
             archive = self.notebook.list_dir("incidents/archive")
             msg_parts = []
             if active:
-                msg_parts.append("活跃 Incident:\n" + "\n".join(f"   • {f}" for f in active))
+                msg_parts.append(t("human.incidents_active", items="\n".join(f"   • {f}" for f in active)))
             else:
-                msg_parts.append("无活跃 Incident。")
+                msg_parts.append(t("human.incidents_no_active"))
             if archive:
                 recent = archive[-5:]
-                msg_parts.append("最近归档（5 条）:\n" + "\n".join(f"   • {f}" for f in recent))
+                msg_parts.append(t("human.incidents_archive", items="\n".join(f"   • {f}" for f in recent)))
             self.chat.say("\n".join(msg_parts))
             return
 
@@ -243,10 +241,11 @@ class HumanInteractionMixin:
             if content:
                 # 限长，避免刷屏
                 limit = self.ctx_limits.show_file_preview_chars
-                preview = content[:limit] + ("\n...(已截断)" if len(content) > limit else "")
-                self.chat.say(f"{target}:\n{preview}")
+                trunc = t("human.file_truncated") if len(content) > limit else ""
+                preview = content[:limit] + trunc
+                self.chat.say(t("human.file_preview", target=target, preview=preview))
             else:
-                self.chat.say(f"找不到 {target}", "warning")
+                self.chat.say(t("human.file_not_found", target=target), "warning")
             return
 
         # ═══ 协作排查模式 ═══
@@ -286,7 +285,7 @@ class HumanInteractionMixin:
         if self.current_issue:
             parts.append(f"## 当前正在关注的问题\n{self.current_issue}")
 
-        return "\n\n".join(parts) if parts else "（无历史上下文）"
+        return "\n\n".join(parts) if parts else t("human.no_context")
 
     def _handle_free_chat(self, msg: str):
         """处理自由对话 / 任务委派 —— 带完整上下文，不可被中断
@@ -297,7 +296,7 @@ class HumanInteractionMixin:
         3. allow_interrupt=False，因为这本身就是在处理人类输入，
            新输入会进 inbox 在下一轮 _drain_human_messages 处理
         """
-        self.chat.log("正在思考你的指令...")
+        self.chat.log(t("human.thinking"))
 
         # 记录人类输入到内存历史和 notebook
         self._free_chat_history.append({"role": "human", "content": msg})
@@ -368,7 +367,7 @@ class HumanInteractionMixin:
         except LLMDegraded:
             raise  # 降级异常仍需冒泡到主循环处理
         except Exception as e:
-            self.chat.say(f"LLM 调用出错: {e}", "warning")
+            self.chat.say(t("human.llm_error", error=e), "warning")
             return
 
         commands = self._extract_commands(response, allow_fallback=False)
@@ -385,18 +384,15 @@ class HumanInteractionMixin:
 
             for round_num in range(1, max_rounds + 1):
                 if round_num == 1:
-                    self.chat.say(f"我打算执行 {len(commands)} 条命令来回答你...")
+                    self.chat.say(t("human.will_execute", count=len(commands)))
                 else:
-                    self.chat.say(f"继续执行 (第 {round_num} 轮)...")
+                    self.chat.say(t("human.continue_round", round=round_num))
 
                 cmd_results = []
                 for cmd in commands[:self.limits.config.max_chat_commands]:
                     if self.chat.is_interrupted():
-                        self.chat.say("收到新指令，停止当前任务。", "info")
+                        self.chat.say(t("human.new_interrupt"), "info")
                         return
-                    self.chat.cmd_log(cmd)
-                    result = self._run_cmd(cmd, timeout=20)
-                    cmd_results.append(str(result))
 
                 # 本轮结果摘要
                 round_summary = "\n".join(
@@ -409,7 +405,7 @@ class HumanInteractionMixin:
                 # 滚动窗口：只保留最近 10 条，之前的压缩
                 if len(all_round_results) > 10:
                     display_results = (
-                        ["（已省略之前的执行结果）"]
+                        [t("human.truncated_omitted")]
                         + all_round_results[-10:]
                     )
                 else:
@@ -437,7 +433,7 @@ class HumanInteractionMixin:
                 except LLMDegraded:
                     raise
                 except Exception as e:
-                    self.chat.say(f"LLM 调用出错: {e}", "warning")
+                    self.chat.say(t("human.llm_error", error=e), "warning")
                     return
 
                 # 检查 LLM 是否还要继续执行命令
@@ -449,9 +445,8 @@ class HumanInteractionMixin:
                     break
 
             if not final_reply:
-                final_reply = f"已执行 {max_rounds} 轮，任务可能尚未完成。以下是当前结论：\n"
-                text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", followup_response, flags=re.DOTALL).strip()
-                final_reply += text or followup_response
+                _text = re.sub(r"```(?:text)?\s*\n?(.*?)\n?```", r"\1", followup_response, flags=re.DOTALL).strip()
+                final_reply = t("human.max_rounds_done", rounds=max_rounds, conclusion=_text or followup_response)
 
             # 记录 Agent 回复到内存历史和 notebook
             total_cmds = sum(r.get("cmd_count", 0) for r in round_stats)
@@ -532,10 +527,7 @@ class HumanInteractionMixin:
         5. 人类随时可以插话，Agent 会在下一轮看到
         """
         self.chat.say(
-            "进入协作排查模式 🤝\n"
-            "我会主动推进排查，只在关键决策点请你确认。\n"
-            "你随时可以插话补充信息或改变方向。\n"
-            "输入 done 或 结束 退出协作模式。",
+            t("human.collab_enter"),
             "info",
         )
 
@@ -571,16 +563,16 @@ class HumanInteractionMixin:
             # ─── 等待人类输入（仅在需要时阻塞）───
             if waiting_for_human:
                 human_input = self.chat.ask_question(
-                    "请输入你的想法（输入 done 退出协作）：",
+                    t("human.collab_prompt"),
                     timeout=1800,  # 30 分钟超时
                 )
 
                 if human_input is None:
-                    self.chat.say("协作超时，退出协作模式。", "info")
+                    self.chat.say(t("human.collab_timeout"), "info")
                     break
 
                 if human_input.strip().lower() in ("done", "结束", "exit", "quit"):
-                    self.chat.say("退出协作排查模式，回到正常工作。", "success")
+                    self.chat.say(t("human.collab_exit"), "success")
                     break
 
                 # 控制指令仍然可以在协作中使用
@@ -598,7 +590,7 @@ class HumanInteractionMixin:
                 if pending_msg is not None:
                     pl = pending_msg.strip().lower()
                     if pl in ("done", "结束", "exit", "quit"):
-                        self.chat.say("退出协作排查模式，回到正常工作。", "success")
+                        self.chat.say(t("human.collab_exit"), "success")
                         break
                     if pl in ("status", "pause", "resume", "stop", "freeze", "unfreeze"):
                         self._handle_human_message(pending_msg)
@@ -627,10 +619,10 @@ class HumanInteractionMixin:
                     interrupt_check=None,  # 协作模式不可中断
                 )
             except LLMDegraded:
-                self.chat.say("LLM 不可用，退出协作模式。", "critical")
+                self.chat.say(t("human.llm_unavailable"), "critical")
                 break
             except Exception as e:
-                self.chat.say(f"LLM 调用出错: {e}", "warning")
+                self.chat.say(t("human.llm_error", error=e), "warning")
                 waiting_for_human = True
                 continue
 
@@ -653,7 +645,7 @@ class HumanInteractionMixin:
                 if intent == "CONTINUE" and all_safe:
                     # 只读命令 + CONTINUE → 直接执行，不问人
                     result_text = self._run_collab_commands(commands)
-                    self.chat.say(f"执行结果：\n{result_text}")
+                    self.chat.say(t("human.exec_result", result=result_text))
                     collab_history.append({
                         "role": "agent",
                         "content": f"{text_part}\n\n执行结果：\n{result_text}",
@@ -665,12 +657,12 @@ class HumanInteractionMixin:
                     logger.info("collab: CONTINUE 含非安全命令，升级为 CONFIRM")
                     cmd_list = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(commands))
                     approved = self.chat.request_approval(
-                        f"执行以下命令（含写操作，需确认）：\n{cmd_list}"
+                        t("human.collab_unsafe_upgrade", cmd_list=cmd_list)
                     )
                     if approved:
                         self.chat.clear_interrupt()  # 批准后清除残留中断标志，避免命令被误杀
                         result_text = self._run_collab_commands(commands)
-                        self.chat.say(f"执行结果：\n{result_text}")
+                        self.chat.say(t("human.exec_result", result=result_text))
                         collab_history.append({
                             "role": "agent",
                             "content": f"{text_part}\n\n执行结果：\n{result_text}",
@@ -679,7 +671,7 @@ class HumanInteractionMixin:
                     else:
                         collab_history.append({
                             "role": "agent",
-                            "content": f"{text_part}\n（命令被人类否决）",
+                            "content": f"{text_part}\n" + t("human.cmd_rejected"),
                         })
                         waiting_for_human = True
 
@@ -687,12 +679,12 @@ class HumanInteractionMixin:
                     # CONFIRM / WAIT → 请求批准
                     cmd_list = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(commands))
                     approved = self.chat.request_approval(
-                        f"执行以下命令：\n{cmd_list}"
+                        t("human.collab_confirm_cmds", cmd_list=cmd_list)
                     )
                     if approved:
                         self.chat.clear_interrupt()  # 批准后清除残留中断标志，避免命令被误杀
                         result_text = self._run_collab_commands(commands)
-                        self.chat.say(f"执行结果：\n{result_text}")
+                        self.chat.say(t("human.exec_result", result=result_text))
                         collab_history.append({
                             "role": "agent",
                             "content": f"{text_part}\n\n执行结果：\n{result_text}",
@@ -702,7 +694,7 @@ class HumanInteractionMixin:
                     else:
                         collab_history.append({
                             "role": "agent",
-                            "content": f"{text_part}\n（命令被人类否决）",
+                            "content": f"{text_part}\n" + t("human.cmd_rejected"),
                         })
                         waiting_for_human = True
 
@@ -723,7 +715,7 @@ class HumanInteractionMixin:
                 max_rounds = getattr(self.limits.config, 'max_collab_auto_rounds', self._MAX_AUTO_ROUNDS_FALLBACK)
                 if auto_rounds >= max_rounds:
                     self.chat.say(
-                        f"已连续自主执行 {auto_rounds} 步，暂停等待你的确认。",
+                        t("human.collab_auto_limit", rounds=auto_rounds),
                         "info",
                     )
                     waiting_for_human = True
@@ -731,37 +723,7 @@ class HumanInteractionMixin:
 
     def _show_help(self):
         """显示帮助"""
-        self.chat.say(
-            "可用指令：\n"
-            "   ─── 控制 ───\n"
-            "   status        查看我当前的状态\n"
-            "   pause         暂停自主巡检\n"
-            "   resume        恢复自主巡检\n"
-            "   stop          中止当前调查回到巡检\n"
-            "   readonly on/off  切换只读模式\n"
-            "   freeze        紧急冻结(禁止所有 L2+ 操作)\n"
-            "   unfreeze      解除紧急冻结\n"
-            "   silence       查看静默中的异常指纹\n"
-            "   clear silence 清空静默表,下一轮重新判断\n"
-            "   fp <模式>     标记异常模式为误报(Smart Notebook)\n"
-            "   scorecard (growth/成长)  查看成长记分卡\n"
-            "   trust (信任)             查看当前信任层级\n"
-            "   new / clear chat / 清除对话   清除自由对话上下文\n"
-            "   collab (协作)  进入协作排查模式(人+Agent 一起定位问题)\n"
-            "   self-fix <描述> 触发一次自修复会话(修改 ops-agent 自己)\n"
-            "   quit          让我下班\n"
-            "   ─── 多目标 ───\n"
-            "   targets (lt)          列出所有管理的目标\n"
-            "   switch <目标名>        切换当前激活的目标\n"
-            "   limits                查看限制配额状态\n"
-            "   ─── 查看 ───\n"
-            "   list playbook (lp)    列出所有 Playbook\n"
-            "   list incidents (li)   列出 Incident\n"
-            "   list trace (lt)       列出 Trace 文件\n"
-            "   show <文件名>          查看某个 Notebook 文件\n"
-            "   ─── 自由对话 ───\n"
-            "   直接打字提问或派发任务,我会自己想办法。",
-        )
+        self.chat.say(t("human.help_text"))
 
     def _find_and_read(self, name: str) -> str:
         """模糊查找并读取一个 Notebook 文件"""
@@ -793,10 +755,10 @@ class HumanInteractionMixin:
 
         cooldown_line = ""
         if s['in_cooldown']:
-            cooldown_line = f"\n   ⚠️ 失败冷却中,还需 {s['cooldown_remaining']} 秒"
+            cooldown_line = t("human.status_cooldown", remaining=s['cooldown_remaining'])
         frozen_line = ""
         if self.emergency.frozen:
-            frozen_line = "\n   🚨 紧急冻结已激活"
+            frozen_line = t("human.status_frozen")
 
         # Smart Notebook 附加状态
         smart_line = ""
@@ -804,10 +766,13 @@ class HumanInteractionMixin:
             try:
                 ss = self.notebook.get_smart_stats()
                 smart_line = (
-                    f"\n   📊 Smart Notebook:\n"
-                    f"      知识链接: {ss.get('linker', {}).get('total_links', 0)}\n"
-                    f"      FP 抑制: {ss.get('fp_suppressed', 0)} 模式\n"
-                    f"      持久洞察: {ss.get('durability_insights', 0)} 条"
+                    t("human.status_smart_title")
+                    + "\n"
+                    + t("human.status_smart_links", count=ss.get('linker', {}).get('total_links', 0))
+                    + "\n"
+                    + t("human.status_smart_fp", count=ss.get('fp_suppressed', 0))
+                    + "\n"
+                    + t("human.status_smart_insights", count=ss.get('durability_insights', 0))
                 )
             except Exception:
                 pass
@@ -815,23 +780,23 @@ class HumanInteractionMixin:
             try:
                 tr = self.notebook.evaluate_trust()
                 if tr:
-                    smart_line += f"\n      信任层级: {tr.get('level', '?')}"
+                    smart_line += "\n" + t("human.status_smart_trust", level=tr.get('level', '?'))
             except Exception:
                 pass
 
         self.chat.say(
-            f"当前状态:\n"
-            f"   模式: {self.mode}\n"
-            f"   当前目标: {self.current_target.name} ({self.current_target.mode})\n"
-            f"   全部目标: {target_list}\n"
-            f"   暂停: {'是' if self.paused else '否'}\n"
-            f"   只读: {'是' if self.readonly else '否'}\n"
-            f"   活跃 Incident: {len(active_incidents)} 个\n"
-            f"   历史 Incident: {len(archived)} 个\n"
-            f"   Playbook: {len(playbooks)} 个\n"
-            f"   动作配额(本小时): {s['actions_last_hour']}/{s['max_actions_per_hour']}\n"
-            f"   当前问题: {self.current_issue or '无'}"
-            f"{cooldown_line}{frozen_line}{smart_line}",
+            t("human.status_title") + "\n"
+            + t("human.status_mode", mode=self.mode) + "\n"
+            + t("human.status_target", name=self.current_target.name, type=self.current_target.mode) + "\n"
+            + t("human.status_targets", targets=target_list) + "\n"
+            + (t("human.status_paused_yes") if self.paused else t("human.status_paused_no")) + "\n"
+            + (t("human.status_readonly_yes") if self.readonly else t("human.status_readonly_no")) + "\n"
+            + t("human.status_active", count=len(active_incidents)) + "\n"
+            + t("human.status_archived", count=len(archived)) + "\n"
+            + t("human.status_playbooks", count=len(playbooks)) + "\n"
+            + t("human.status_quota", used=s['actions_last_hour'], max=s['max_actions_per_hour']) + "\n"
+            + t("human.status_issue", issue=self.current_issue or t("prompt.no_incident"))
+            + cooldown_line + frozen_line + smart_line,
             "info",
         )
 
@@ -842,7 +807,7 @@ class HumanInteractionMixin:
             self.chat.say(content[:2000], "info")
         else:
             self.chat.say(
-                "暂无 Scorecard 数据。Smart Notebook 模式下每周末自动生成。",
+                t("human.scorecard_empty"),
                 "info",
             )
 
@@ -853,15 +818,15 @@ class HumanInteractionMixin:
                 result = self.notebook.evaluate_trust()
                 if result:
                     limits = result.get("limits", {})
-                    lines = [f"信任层级: {result['level']}"]
+                    lines = [t("human.trust_level", level=result['level'])]
                     if isinstance(limits, dict):
                         for k, v in limits.items():
-                            lines.append(f"   {k}: {v}")
+                            lines.append(t("human.trust_limit", key=k, value=v))
                     self.chat.say("\n".join(lines), "info")
                     return
             except Exception:
                 pass
-        self.chat.say("信任演化需要 Smart Notebook 扩展。", "info")
+        self.chat.say(t("human.trust_need_smart"), "info")
 
     def _run_self_repair(self, description: str):
         """触发一次自修复会话。
@@ -873,9 +838,7 @@ class HumanInteractionMixin:
         emergency_stop = Path(self.notebook.path) / "EMERGENCY_STOP_SELF_MODIFY"
         if emergency_stop.exists():
             self.chat.say(
-                f"🚨 自修复已被冻结(EMERGENCY_STOP_SELF_MODIFY 存在)。\n"
-                f"原因:\n{emergency_stop.read_text()}\n"
-                f"人类确认后删除该文件可恢复。",
+                t("human.selffix_frozen", reason=emergency_stop.read_text()),
                 "critical"
             )
             return
@@ -883,15 +846,14 @@ class HumanInteractionMixin:
         selfdev_path = os.environ.get("OPS_AGENT_SELFDEV_PATH", "")
         if not selfdev_path:
             self.chat.say(
-                "自修复未配置。请设置环境变量 OPS_AGENT_SELFDEV_PATH "
-                "指向一个独立的 ops-agent git 工作区(不能与运行目录相同)。",
+                t("human.selffix_no_path"),
                 "warning"
             )
             return
 
         if self.patch_loop is None:
             self.chat.say(
-                "PatchLoop 未初始化,无法自修复。请检查启动日志。", "warning"
+                t("human.selffix_no_loop"), "warning"
             )
             return
 
@@ -899,7 +861,7 @@ class HumanInteractionMixin:
             from src.repair.self_repair import SelfRepairSession
         except Exception as e:
             logger.exception("SelfRepairSession 导入失败")
-            self.chat.say(f"自修复模块加载失败: {e}", "warning")
+            self.chat.say(t("human.selffix_load_failed", error=e), "warning")
             return
 
         session = SelfRepairSession(
@@ -911,10 +873,8 @@ class HumanInteractionMixin:
         if result.success:
             # 成功路径会触发 3 秒后重启,这里只打一条
             self.chat.say(
-                f"自修复成功: {result.reason}\n"
-                f"分支: {result.branch}\n"
-                f"pre-tag: {result.pre_tag}",
+                t("human.selffix_success", reason=result.reason, branch=result.branch, pre_tag=result.pre_tag),
                 "success"
             )
         else:
-            self.chat.say(f"自修复未完成: {result.reason}", "warning")
+            self.chat.say(t("human.selffix_incomplete", reason=result.reason), "warning")
