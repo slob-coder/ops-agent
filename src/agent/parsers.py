@@ -161,6 +161,40 @@ class ParsersMixin:
         # ,] → ]  ,} → }  （逗号后可选空白再跟闭括号）
         return re.sub(r',\s*([}\]])', r'\1', text)
 
+    @staticmethod
+    def _fix_json_escapes(text: str) -> str:
+        """修复 LLM 在 JSON 字符串中的非法转义。
+
+        常见问题: LLM 用 \\' 转义单引号，但 JSON 标准不支持 \\'。
+        单引号在 JSON 字符串内不需要转义，直接去掉反斜杠即可。
+        同时处理 \\' → ' 和字符串内的裸换行 → \\n。
+        """
+        # 修复 \\' (非法 JSON 转义) → '
+        # 注意: 必须只替换字符串内的 \\'，但简单正则足够——
+        # \\ 在 JSON 中是合法转义(表示字面 \\)，所以 \\' 只可能是
+        # LLM 错误转义单引号
+        fixed = re.sub(r"\\'", "'", text)
+        # 修复字符串内的裸换行符(JSON strict 模式不允许)
+        # 只替换双引号之间的裸换行
+        result = []
+        in_string = False
+        i = 0
+        while i < len(fixed):
+            c = fixed[i]
+            if c == '"' and (i == 0 or fixed[i-1] != '\\'):
+                in_string = not in_string
+                result.append(c)
+            elif in_string and c == '\n':
+                result.append('\\n')
+            elif in_string and c == '\r':
+                result.append('\\r')
+            elif in_string and c == '\t':
+                result.append('\\t')
+            else:
+                result.append(c)
+            i += 1
+        return ''.join(result)
+
     def _extract_json(self, response: str) -> Optional[dict]:
         """从 LLM 回复中提取 JSON 对象。
 
@@ -183,7 +217,7 @@ class ParsersMixin:
         if match:
             candidates.append(match.group(0))
 
-        # 逐个尝试解析，先原样，再修复尾随逗号
+        # 逐个尝试解析，先原样，再修复常见问题
         for text in candidates:
             try:
                 return json.loads(text)
@@ -191,6 +225,10 @@ class ParsersMixin:
                 pass
             try:
                 return json.loads(self._strip_trailing_commas(text))
+            except json.JSONDecodeError:
+                pass
+            try:
+                return json.loads(self._fix_json_escapes(text))
             except json.JSONDecodeError:
                 pass
 
