@@ -219,9 +219,9 @@ class PatchApplier:
             diff = self._fuzzy_fix_paths(diff, repo_path)
             missing = self._check_missing_files(repo_path, diff)
         if missing:
-            logger.warning(f"patch_applier: missing files in repo: {missing}")
+            logger.warning(f"patch_applier: missing files in repo after fuzzy fix: {missing}")
             return 1, f"files not found in repo: {', '.join(missing)}"
-        logger.info(f"patch_applier: applying diff ({len(diff)} chars):\n{diff[:3000]}")
+        logger.debug(f"patch_applier: applying diff ({len(diff)} chars)")
         try:
             proc = subprocess.run(
                 ["git", "apply", "--3way", "--whitespace=nowarn", "-"],

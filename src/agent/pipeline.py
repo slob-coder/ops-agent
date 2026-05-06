@@ -480,7 +480,6 @@ class PipelineMixin:
         )
 
         response = self._ask_llm(prompt, phase="DIAGNOSE")
-        logger.info(f"diagnose LLM response ({len(response)} chars):\n{response[:3000]}")
         result = self._parse_diagnosis(response)
 
         # 解析失败时重试一次
@@ -489,7 +488,6 @@ class PipelineMixin:
             self.chat.say(t("pipeline.diagnose_json_retry"), "warning")
             retry_prompt = prompt + "\n\n[重要提醒] 上次你的输出不是合法 JSON，请**只输出 JSON 对象**，不要加任何解释文字。确保 JSON 完整，不要截断。"
             response = self._ask_llm(retry_prompt, phase="DIAGNOSE_RETRY")
-            logger.info(f"diagnose LLM retry response ({len(response)} chars):\n{response[:3000]}")
             result = self._parse_diagnosis(response)
 
         # 屏幕只显示结论

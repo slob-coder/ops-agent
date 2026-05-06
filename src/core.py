@@ -137,7 +137,10 @@ class OpsAgent(
             self.patch_loop = PatchLoop(
                 generator=PatchGenerator(self.llm),
                 applier=PatchApplier(),
-                logger_fn=lambda msg: self.chat.log(msg) if self.chat else logger.info(msg),
+                logger_fn=lambda msg: (
+                    self.chat.log(msg) if self.chat else None,
+                    self.chat.trace("PATCH", msg) if self.chat else None,
+                )[0],
                 max_attempts=self.limits.config.max_patch_attempts,
             )
         except Exception as e:

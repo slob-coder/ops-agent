@@ -93,13 +93,13 @@ class PatchGenerator:
         retry_context: 上一次失败的反馈(空 = 首次)
         """
         prompt = self._build_prompt(diagnosis, locations, repo, retry_context)
-        logger.info(f"patch_generator: prompt length={len(prompt)} chars, max_tokens=2048")
         try:
             response = self.llm.ask(prompt, system=self.SYSTEM_PROMPT, max_tokens=2048)
         except Exception as e:
             logger.warning(f"LLM call failed during patch generation: {e}")
             return None
-        logger.info(f"patch_generator: LLM response ({len(response)} chars):\n{response[:3000]}")
+        if not response or not response.strip():
+            logger.warning(f"patch_generator: LLM returned empty response (prompt_len={len(prompt)})")
         return self.parse_response(response, repo)
 
     # ---------- prompt 构造 ----------
@@ -244,7 +244,7 @@ class PatchGenerator:
 
         # 记录日志
         diff = raw_diff
-        logger.info(f"patch_generator: raw LLM diff:\n{raw_diff[:2000]}")
+        logger.debug(f"patch_generator: extracted diff ({len(diff)} chars): {diff[:500]}")
 
         description = ""
         m = self._DESC_RE.search(response)
