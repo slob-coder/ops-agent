@@ -220,7 +220,7 @@ class PatchApplier:
         logger.info(f"patch_applier: applying diff ({len(diff)} chars):\n{diff[:3000]}")
         try:
             proc = subprocess.run(
-                ["git", "apply", "--whitespace=nowarn", "-"],
+                ["git", "apply", "--3way", "--whitespace=nowarn", "-"],
                 cwd=repo_path,
                 input=diff,
                 capture_output=True,
