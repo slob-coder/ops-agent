@@ -91,6 +91,12 @@ URGENCY_STYLE = {
 _SEPARATOR = f"{Color.DIM}{'─' * 50}{Color.RESET}"
 
 
+def _raw_print(*args, **kwargs):
+    """绕过 patch_stdout，直接写原始 stdout，保留 ANSI 颜色且不干扰 prompt_toolkit"""
+    kwargs.setdefault("flush", True)
+    print(*args, file=sys.__stdout__, **kwargs)
+
+
 class ConsoleBackend(ChannelBackend):
     """终端交互后端 — 原有 chat.py 的输入/输出逻辑"""
 
@@ -130,7 +136,7 @@ class ConsoleBackend(ChannelBackend):
     def _interactive_listener(self):
         while self._running:
             try:
-                with patch_stdout():
+                with patch_stdout(raw=True):
                     line = self._session.prompt()
                 if not line:
                     continue
@@ -139,12 +145,12 @@ class ConsoleBackend(ChannelBackend):
                     continue
                 with self._output_lock:
                     ts = datetime.now().strftime("%H:%M:%S")
-                    print(
+                    _raw_print(
                         f"{Color.GRAY}[{ts}]{Color.RESET} "
                         f"{Color.BOLD}{Color.YELLOW}▶ {line}{Color.RESET}",
                         flush=True,
                     )
-                    print(_SEPARATOR, flush=True)
+                    _raw_print(_SEPARATOR, flush=True)
                 if self._waiting_approval:
                     self._approval_queue.put(("console", line))
                 else:
@@ -169,12 +175,12 @@ class ConsoleBackend(ChannelBackend):
                 if not line:
                     continue
                 ts = datetime.now().strftime("%H:%M:%S")
-                print(
+                _raw_print(
                     f"{Color.GRAY}[{ts}]{Color.RESET} "
                     f"{Color.BOLD}{Color.YELLOW}▶ {line}{Color.RESET}",
                     flush=True,
                 )
-                print(_SEPARATOR, flush=True)
+                _raw_print(_SEPARATOR, flush=True)
                 if self._waiting_approval:
                     self._approval_queue.put(("console", line))
                 else:
@@ -192,19 +198,19 @@ class ConsoleBackend(ChannelBackend):
         if len(lines) > 1:
             formatted += "\n" + "\n".join(lines[1:])
         with self._output_lock:
-            print(formatted, flush=True)
-            print(_SEPARATOR, flush=True)
+            _raw_print(formatted, flush=True)
+            _raw_print(_SEPARATOR, flush=True)
 
     def send_log(self, message: str, urgency: str = "observe") -> None:
         icon, color = URGENCY_STYLE.get(urgency, ("·", Color.GRAY))
         ts = datetime.now().strftime("%H:%M:%S")
         formatted = f"{Color.GRAY}[{ts}] {icon} {message}{Color.RESET}"
         with self._output_lock:
-            print(formatted, flush=True)
+            _raw_print(formatted, flush=True)
 
     def send_cmd_log(self, cmd: str) -> None:
         with self._output_lock:
-            print(f"{Color.DIM}           │ {cmd}{Color.RESET}", flush=True)
+            _raw_print(f"{Color.DIM}           │ {cmd}{Color.RESET}", flush=True)
 
     def request_approval(self, action_description: str) -> None:
         self.send(
@@ -290,7 +296,7 @@ class HumanChannel:
         # 只在 console 显示，其他后端忽略
         if self._console_backend:
             with self._console_backend._output_lock:
-                print(
+                _raw_print(
                     f"{Color.DIM}[{ts}] ◈ LLM{label}{Color.RESET}",
                     flush=True,
                 )
@@ -302,7 +308,7 @@ class HumanChannel:
         # console only
         if self._console_backend:
             with self._console_backend._output_lock:
-                print(formatted, flush=True)
+                _raw_print(formatted, flush=True)
 
     def trace(self, phase: str, content: str):
         """详细过程记录 — 只写文件，不上屏幕"""
@@ -511,4 +517,4 @@ class HumanChannel:
                 lines.append(f"│{_pad(f'    {Color.YELLOW}{cmd}{Color.CYAN}    {desc}')}│")
             lines.append(f"╰{border}╯")
 
-            print(Color.CYAN + f"\n".join(lines) + Color.RESET + mode_hint, flush=True)
+            _raw_print(Color.CYAN + f"\n".join(lines) + Color.RESET + mode_hint, flush=True)
