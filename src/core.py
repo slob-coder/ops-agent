@@ -579,7 +579,7 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
         max_diagnose_rounds = self.limits.config.max_diagnose_rounds
         max_fix_attempts = self.limits.config.max_fix_attempts
 
-        for _ in range(max_total_rounds):
+        for _i in range(max_total_rounds):
             # 每个状态转换前检查人类输入
             if self._drain_human_messages():
                 # 只有明确的中断指令(stop/pause/quit)才退出 incident_loop
