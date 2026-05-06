@@ -474,7 +474,9 @@ class HumanChannel:
             w = 0
             for ch in s:
                 eaw = unicodedata.east_asian_width(ch)
-                w += 2 if eaw in ('W', 'F') else 1
+                # East Asian Ambiguous (A) 在中文终端按 2 列宽处理
+                # 包括 —、–、×、÷ 等常见符号
+                w += 2 if eaw in ('W', 'F', 'A') else 1
             return w
 
         # 构建各行内容（不含颜色、边框），然后统一对齐
