@@ -222,14 +222,82 @@ class PatchGenerator:
         for m in self._DIFF_RE.finditer(response):
             block = m.group(1)
             if "@@" in block and ("---" in block or "+++" in block):
-                return block.strip("\n") + "\n"
+                return self._sanitize_diff(block.strip("\n") + "\n")
         # 退路:全文里找 unified diff 段落
         if "@@" in response and "---" in response:
             # 抓从第一个 --- 开始到末尾
             start = response.find("--- ")
             if start >= 0:
-                return response[start:].strip("\n") + "\n"
+                return self._sanitize_diff(response[start:].strip("\n") + "\n")
         return ""
+
+    @staticmethod
+    def _sanitize_diff(diff: str) -> str:
+        """清洗 LLM 输出的 diff，修复常见格式问题
+
+        1. context 行(非 +/-/@@/\\ 开头)补前导空格
+        2. 空行补前导空格(git apply 要求 hunk 内空行也以空格开头)
+        3. 修正 hunk header 中的行数计数
+        """
+        import re as _re
+
+        lines = diff.splitlines()
+        # 分段: preamble + [(header, hunk_lines), ...]
+        segments: list[tuple[str, list[str]]] = []
+        preamble: list[str] = []
+        current_header = ""
+        current_hunk: list[str] = []
+
+        for line in lines:
+            if _re.match(r"^@@@? -\d+", line):
+                if current_header:
+                    segments.append((current_header, current_hunk))
+                current_header = line
+                current_hunk = []
+            elif current_header:
+                current_hunk.append(line)
+            else:
+                preamble.append(line)
+
+        if current_header:
+            segments.append((current_header, current_hunk))
+
+        if not segments:
+            return diff
+
+        # 修正每个 hunk
+        result = preamble[:]
+        for header, hunk_lines in segments:
+            # 修正行格式
+            fixed = []
+            for line in hunk_lines:
+                if line.startswith(("+", "-", " ", "\\")):
+                    fixed.append(line)
+                elif line.strip() == "":
+                    fixed.append(" ")
+                else:
+                    fixed.append(" " + line)
+
+            # 重新计算行数并修正 header
+            old_count = sum(1 for l in fixed if l.startswith((" ", "-")))
+            new_count = sum(1 for l in fixed if l.startswith((" ", "+")))
+
+            m = _re.match(
+                r"^@@@? -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? (@@@?.*)$",
+                header,
+            )
+            if m:
+                old_start = m.group(1)
+                new_start = m.group(2)
+                trail = m.group(3)
+                oc = f",{old_count}" if old_count != 1 else ""
+                nc = f",{new_count}" if new_count != 1 else ""
+                header = f"@@ -{old_start}{oc} +{new_start}{nc} {trail}"
+
+            result.append(header)
+            result.extend(fixed)
+
+        return "\n".join(result) + "\n"
 
     @staticmethod
     def _extract_files_from_diff(diff: str) -> list[str]:
