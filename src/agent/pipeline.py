@@ -230,6 +230,9 @@ class PipelineMixin:
         返回 LocateResult（复用 SourceLocator 的数据结构），
         定位结果不包含行号精确信息（frame.line 设为 0），
         但包含文件上下文代码片段。
+
+        搜索策略：先搜最具体的关键词（含下划线的标识符），
+        再 fallback 到通用词。优先返回匹配更多关键词的文件。
         """
         from src.repair.source_locator import LocateResult, SourceLocation
         from src.repair.stack_parser import StackFrame
@@ -257,15 +260,21 @@ class PipelineMixin:
         context_lines = 3  # 匹配行前后各 3 行
         max_render_chars = 2000  # 单个 location 的渲染上限
 
+        # 分层搜索：先搜最具体的关键词（蛇形命名），再搜通用词
+        # 蛇形命名（含 _）比通用词（如 postgres）更精确
+        specific_keywords = [k for k in keywords if '_' in k]
+        general_keywords = [k for k in keywords if '_' not in k]
+
         for repo in repos:
             if not repo.path or not os.path.isdir(repo.path):
                 continue
             if len(locations) >= max_files:
                 break
 
-            # 用 grep 在仓库中搜索关键词
-            # 构造搜索模式：任意关键词匹配
-            pattern = "|".join(keywords)
+            # 第一轮：只搜具体关键词（如 last_accessed）
+            search_keywords = specific_keywords if specific_keywords else keywords
+            pattern = "|".join(search_keywords)
+
             try:
                 result = self._run_cmd(
                     f"grep -rn -E '{pattern}' --include='*.go' --include='*.py' "
@@ -278,6 +287,21 @@ class PipelineMixin:
             except Exception as e:
                 logger.debug(f"keyword grep failed for repo {repo.name}: {e}")
                 continue
+
+            # 第一轮无结果，fallback 到通用词
+            if (not grep_output or grep_output.strip() == "") and general_keywords and specific_keywords:
+                pattern2 = "|".join(general_keywords)
+                try:
+                    result = self._run_cmd(
+                        f"grep -rn -E '{pattern2}' --include='*.go' --include='*.py' "
+                        f"--include='*.java' --include='*.js' --include='*.ts' "
+                        f"--include='*.sql' --include='*.yaml' --include='*.yml' "
+                        f"{repo.path} 2>/dev/null | head -30",
+                        timeout=15,
+                    )
+                    grep_output = str(result)
+                except Exception:
+                    continue
 
             if not grep_output or grep_output.strip() == "":
                 continue
