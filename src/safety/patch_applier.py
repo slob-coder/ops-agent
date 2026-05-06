@@ -215,6 +215,10 @@ class PatchApplier:
         # 预检: diff 中引用的文件是否存在于仓库中
         missing = self._check_missing_files(repo_path, diff)
         if missing:
+            # 尝试模糊匹配修复路径
+            diff = self._fuzzy_fix_paths(diff, repo_path)
+            missing = self._check_missing_files(repo_path, diff)
+        if missing:
             logger.warning(f"patch_applier: missing files in repo: {missing}")
             return 1, f"files not found in repo: {', '.join(missing)}"
         logger.info(f"patch_applier: applying diff ({len(diff)} chars):\n{diff[:3000]}")
@@ -251,6 +255,61 @@ class PatchApplier:
                 if not os.path.isfile(full):
                     missing.append(p)
         return missing
+
+    @staticmethod
+    def _fuzzy_fix_paths(diff: str, repo_path: str) -> str:
+        """尝试修复 diff 中不存在的文件路径，通过 basename 模糊匹配
+
+        LLM 经常编造路径（如 internal/lifecycle.py → app/services/lifecycle.py），
+        但文件名通常是对的。用 basename 在仓库中搜索正确路径。
+        """
+        import subprocess as sp
+        lines = diff.splitlines()
+        fixed = []
+        changed = False
+        for line in lines:
+            if not (line.startswith("--- a/") or line.startswith("+++ b/")):
+                fixed.append(line)
+                continue
+            prefix = line[:6]  # "--- a/" or "+++ b/"
+            p = line[6:].strip()
+            if p == "/dev/null":
+                fixed.append(line)
+                continue
+            full = os.path.join(repo_path, p)
+            if os.path.isfile(full):
+                fixed.append(line)
+                continue
+            # basename 搜索
+            basename = os.path.basename(p)
+            try:
+                result = sp.run(
+                    ["find", repo_path, "-name", basename, "-type", "f",
+                     "-not", "-path", "*/.git/*", "-not", "-path", "*/__pycache__/*",
+                     "-not", "-path", "*/node_modules/*"],
+                    capture_output=True, text=True, timeout=10,
+                    cwd=repo_path,
+                )
+                candidates = [c for c in result.stdout.strip().splitlines() if c]
+                if len(candidates) == 1:
+                    # 唯一匹配 → 替换
+                    new_rel = os.path.relpath(candidates[0], repo_path)
+                    fixed.append(f"{prefix}{new_rel}")
+                    logger.info(f"patch_applier: fuzzy fix path: {p} → {new_rel}")
+                    changed = True
+                elif len(candidates) > 1:
+                    # 多个匹配 → 选最相似的
+                    best = min(candidates, key=lambda c: len(c))
+                    new_rel = os.path.relpath(best, repo_path)
+                    fixed.append(f"{prefix}{new_rel}")
+                    logger.info(f"patch_applier: fuzzy fix path (best of {len(candidates)}): {p} → {new_rel}")
+                    changed = True
+                else:
+                    fixed.append(line)
+            except Exception:
+                fixed.append(line)
+
+        return "\n".join(fixed) if changed else diff
 
     def _current_branch(self, repo_path: str) -> str:
         rc, out = self._run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path)
