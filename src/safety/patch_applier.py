@@ -212,6 +212,10 @@ class PatchApplier:
 
     def _git_apply(self, repo_path: str, diff: str) -> tuple[int, str]:
         """通过 stdin 把 diff 喂给 git apply"""
+        # 预检: diff 中引用的文件是否存在于仓库中
+        missing = self._check_missing_files(repo_path, diff)
+        if missing:
+            return 1, f"files not found in repo: {', '.join(missing)}"
         try:
             proc = subprocess.run(
                 ["git", "apply", "--whitespace=nowarn", "-"],
@@ -227,6 +231,24 @@ class PatchApplier:
             return 124, "git apply timeout"
         except Exception as e:
             return 1, f"git apply error: {e}"
+
+    @staticmethod
+    def _check_missing_files(repo_path: str, diff: str) -> list[str]:
+        """检查 diff 中 +++ 行引用的文件是否在仓库中存在"""
+        missing = []
+        for line in diff.splitlines():
+            if not line.startswith("+++ "):
+                continue
+            p = line[4:].strip()
+            if p.startswith("b/"):
+                p = p[2:]
+            elif p.startswith("a/"):
+                p = p[2:]
+            if p and p != "/dev/null":
+                full = os.path.join(repo_path, p)
+                if not os.path.isfile(full):
+                    missing.append(p)
+        return missing
 
     def _current_branch(self, repo_path: str) -> str:
         rc, out = self._run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path)

@@ -44,6 +44,7 @@ class SourceLocation:
     frame: StackFrame
     local_file: str                # 本地绝对路径
     repo_name: str                 # 所属仓库别名
+    repo_path: str = ""            # 仓库本地根目录(用于计算仓库相对路径)
     context_before: str = ""       # 目标行之前的代码
     target_line: str = ""          # 目标行本身
     context_after: str = ""        # 目标行之后的代码
@@ -55,8 +56,12 @@ class SourceLocation:
         if max_chars <= 0:
             max_chars = get_context_limits().source_location_render_chars
         lines = []
-        lines.append(f"### {self.repo_name}:{os.path.relpath(self.local_file, start='/')}"
-                     f":{self.frame.line}")
+        # 优先使用仓库相对路径，LLM 生成 diff 时需要这个
+        if self.repo_path:
+            rel_path = os.path.relpath(self.local_file, self.repo_path)
+        else:
+            rel_path = os.path.relpath(self.local_file, start='/')
+        lines.append(f"### {self.repo_name}:{rel_path}:{self.frame.line}")
         if self.frame.function:
             lines.append(f"函数: {self.frame.function}")
         lines.append("```")
@@ -150,14 +155,14 @@ class SourceLocator:
                 )
                 local = os.path.normpath(local)
                 if os.path.isfile(local):
-                    return self._build_location(frame, local, repo.name)
+                    return self._build_location(frame, local, repo.name, repo.path)
 
         # 策略 2 + 3: 按文件名/路径后缀匹配
         filename = os.path.basename(frame.file.replace("\\", "/"))
         if not filename:
             return None
 
-        best: tuple[int, str, str] | None = None  # (score, abs_path, repo_name)
+        best: tuple[int, str, str, str] | None = None  # (score, abs_path, repo_name, repo_path)
         for repo in self.repos:
             if self._lang_mismatch(repo, frame):
                 continue
@@ -165,10 +170,10 @@ class SourceLocator:
             for cand in candidates:
                 score = self._score_match(frame.file, cand, repo.path)
                 if best is None or score > best[0]:
-                    best = (score, cand, repo.name)
+                    best = (score, cand, repo.name, repo.path)
 
         if best and best[0] > 0:
-            return self._build_location(frame, best[1], best[2])
+            return self._build_location(frame, best[1], best[2], best[3])
 
         return None
 
@@ -230,7 +235,7 @@ class SourceLocator:
         return score if score > 0 else 1  # 同名兜底
 
     def _build_location(self, frame: StackFrame, local_file: str,
-                        repo_name: str) -> SourceLocation | None:
+                        repo_name: str, repo_path: str = "") -> SourceLocation | None:
         """读取目标行前后上下文,组装成 SourceLocation。"""
         try:
             size = os.path.getsize(local_file)
@@ -258,6 +263,7 @@ class SourceLocator:
             frame=frame,
             local_file=local_file,
             repo_name=repo_name,
+            repo_path=repo_path,
             context_before=before,
             target_line=target,
             context_after=after,
