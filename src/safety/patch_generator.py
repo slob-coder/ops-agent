@@ -93,6 +93,7 @@ class PatchGenerator:
         retry_context: 上一次失败的反馈(空 = 首次)
         """
         prompt = self._build_prompt(diagnosis, locations, repo, retry_context)
+        logger.info(f"patch_generator: prompt length={len(prompt)} chars, max_tokens=2048")
         try:
             response = self.llm.ask(prompt, system=self.SYSTEM_PROMPT, max_tokens=2048)
         except Exception as e:

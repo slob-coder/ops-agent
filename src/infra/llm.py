@@ -186,6 +186,8 @@ class LLMClient:
                             logger.info("LLM stream interrupted by user")
                             raise LLMInterrupted("被人类中断")
                 text = "".join(text_parts)
+                if not text:
+                    logger.warning(f"LLM returned empty (provider=anthropic, prompt_len={len(prompt)})")
 
             elif self.provider in ("openai", "zhipu"):
                 messages = []
@@ -195,6 +197,7 @@ class LLMClient:
 
                 # 流式生成
                 text_parts = []
+                finish_reason = None
                 stream = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -204,6 +207,8 @@ class LLMClient:
                 for chunk in stream:
                     if chunk.choices and chunk.choices[0].delta.content:
                         text_parts.append(chunk.choices[0].delta.content)
+                    if chunk.choices and chunk.choices[0].finish_reason:
+                        finish_reason = chunk.choices[0].finish_reason
                     if interrupt_check and interrupt_check():
                         logger.info("LLM stream interrupted by user")
                         try:
@@ -212,6 +217,8 @@ class LLMClient:
                             pass
                         raise LLMInterrupted("被人类中断")
                 text = "".join(text_parts)
+                if not text:
+                    logger.warning(f"LLM returned empty (finish_reason={finish_reason}, prompt_len={len(prompt)})")
 
             logger.debug(f"LLM response: {text}...")
             return text
