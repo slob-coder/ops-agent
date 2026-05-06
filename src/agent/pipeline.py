@@ -224,6 +224,23 @@ class PipelineMixin:
                 unique.append(k)
         return unique[:5]
 
+    def _extract_bug_keywords(self, diagnosis: dict) -> list[str]:
+        """从 diagnosis 中提取跟 bug 直接相关的具体标识符
+
+        优先提取：字段名、表名、函数名等具体标识符（含下划线）。
+        排除通用词（postgres, error, database 等）。
+        """
+        _BUG_STOPWORDS = frozenset({
+            "postgres", "postgresql", "mysql", "redis", "mongodb",
+            "error", "failed", "exception", "does_not_exist", "not_found",
+            "database", "schema", "table", "column", "connection",
+            "docker", "container", "service", "server",
+        })
+        text = f"{diagnosis.get('facts', '')} {diagnosis.get('hypothesis', '')}"
+        # 复用已有的关键词提取，但过滤通用词
+        raw = self._extract_error_keywords(text)
+        return [k for k in raw if k.lower() not in _BUG_STOPWORDS]
+
     def _search_source_by_keywords(self, keywords: list[str]) -> "LocateResult | None":
         """在 source_repos 中用关键词搜索匹配的源码文件
 
@@ -494,6 +511,16 @@ class PipelineMixin:
         result = self._last_locate_result
         if not result or not result.locations:
             return
+
+        # 重新搜索：用 diagnosis 的 hypothesis/facts 中的具体标识符搜索源码
+        # diagnose 阶段的 source locator 可能定位到无关代码（如通用 "postgres" 匹配到
+        # credit-service），而 patch 需要直接跟 bug 相关的源码
+        bug_keywords = self._extract_bug_keywords(diagnosis)
+        if bug_keywords:
+            bug_result = self._search_source_by_keywords(bug_keywords)
+            if bug_result and bug_result.locations:
+                logger.info(f"patch: bug-specific search found {len(bug_result.locations)} locations: {bug_keywords}")
+                result = bug_result
 
         # 选第一个定位的 location 所属的 repo
         repo_name = result.locations[0].repo_name
