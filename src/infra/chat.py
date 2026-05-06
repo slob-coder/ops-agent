@@ -130,7 +130,7 @@ class ConsoleBackend(ChannelBackend):
     def _interactive_listener(self):
         while self._running:
             try:
-                with patch_stdout(raw=True):
+                with patch_stdout():
                     line = self._session.prompt()
                 if not line:
                     continue
