@@ -297,7 +297,8 @@ class PipelineMixin:
                 "--exclude-dir=venv --exclude-dir=.venv --exclude-dir=dist --exclude-dir=build "
                 "--exclude-dir=target --exclude-dir=.idea --exclude-dir=.vscode "
                 "--exclude='*.min.js' --exclude='*.min.css' --exclude='*.lock' "
-                "--exclude='*.pb.go' --exclude='package-lock.json' --exclude='yarn.lock'"
+                "--exclude='*.pb.go' --exclude='package-lock.json' --exclude='yarn.lock' "
+                "--exclude='*.bak' --exclude='*.bak.*' --exclude='*.orig'"
             )
             try:
                 result = self._run_cmd(
