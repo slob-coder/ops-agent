@@ -468,7 +468,9 @@ class HumanChannel:
 
         # 动态计算显示宽度（兼容 CJK 双宽字符）
         def _display_width(s: str) -> int:
-            import unicodedata
+            import unicodedata, re
+            # 剥离 ANSI 转义序列，避免把 \033[31m 等算入显示宽度
+            s = re.sub(r'\033\[[0-9;]*m', '', s)
             w = 0
             for ch in s:
                 eaw = unicodedata.east_asian_width(ch)
