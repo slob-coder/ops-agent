@@ -98,6 +98,7 @@ class PatchGenerator:
         except Exception as e:
             logger.warning(f"LLM call failed during patch generation: {e}")
             return None
+        logger.info(f"patch_generator: LLM response ({len(response)} chars):\n{response[:3000]}")
         return self.parse_response(response, repo)
 
     # ---------- prompt 构造 ----------
