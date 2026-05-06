@@ -215,7 +215,9 @@ class PatchApplier:
         # 预检: diff 中引用的文件是否存在于仓库中
         missing = self._check_missing_files(repo_path, diff)
         if missing:
+            logger.warning(f"patch_applier: missing files in repo: {missing}")
             return 1, f"files not found in repo: {', '.join(missing)}"
+        logger.info(f"patch_applier: applying diff ({len(diff)} chars):\n{diff[:3000]}")
         try:
             proc = subprocess.run(
                 ["git", "apply", "--whitespace=nowarn", "-"],

@@ -63,6 +63,7 @@ class PatchLoop:
                 retry_context = self._format_retry_for_parse_failure()
                 continue
 
+            self._log(f"  ↳ diff ({len(patch.diff)} chars, files: {patch.files_changed})")
             result = self.applier.apply_and_verify(patch, repo, incident_id=incident_id)
             last_result = result
             last_patch = patch

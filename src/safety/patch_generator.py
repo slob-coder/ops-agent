@@ -186,10 +186,17 @@ class PatchGenerator:
             return None
 
         # diff 是必需的,先抓
-        diff = self._extract_diff(response)
-        if not diff:
+        raw_diff = self._extract_diff(response)
+        if not raw_diff:
             logger.debug("no diff block in response")
             return None
+
+        # 清洗 diff 并记录日志
+        diff = self._sanitize_diff(raw_diff)
+        if diff != raw_diff:
+            logger.info(f"patch_generator: diff sanitized (was {len(raw_diff)} chars, now {len(diff)} chars)")
+        logger.info(f"patch_generator: raw LLM diff:\n{raw_diff[:2000]}")
+        logger.info(f"patch_generator: sanitized diff:\n{diff[:2000]}")
 
         description = ""
         m = self._DESC_RE.search(response)
