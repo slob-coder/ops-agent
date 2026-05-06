@@ -275,11 +275,16 @@ class PipelineMixin:
             search_keywords = specific_keywords if specific_keywords else keywords
             pattern = "|".join(search_keywords)
 
+            _grep_excludes = (
+                "--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=__pycache__ "
+                "--exclude-dir=venv --exclude-dir=.venv --exclude-dir=dist --exclude-dir=build "
+                "--exclude-dir=target --exclude-dir=.idea --exclude-dir=.vscode "
+                "--exclude='*.min.js' --exclude='*.min.css' --exclude='*.lock' "
+                "--exclude='*.pb.go' --exclude='package-lock.json' --exclude='yarn.lock'"
+            )
             try:
                 result = self._run_cmd(
-                    f"grep -rn -E '{pattern}' --include='*.go' --include='*.py' "
-                    f"--include='*.java' --include='*.js' --include='*.ts' "
-                    f"--include='*.sql' --include='*.yaml' --include='*.yml' "
+                    f"grep -rn -E '{pattern}' {_grep_excludes} "
                     f"{repo.path} 2>/dev/null | head -30",
                     timeout=15,
                 )
@@ -293,9 +298,7 @@ class PipelineMixin:
                 pattern2 = "|".join(general_keywords)
                 try:
                     result = self._run_cmd(
-                        f"grep -rn -E '{pattern2}' --include='*.go' --include='*.py' "
-                        f"--include='*.java' --include='*.js' --include='*.ts' "
-                        f"--include='*.sql' --include='*.yaml' --include='*.yml' "
+                        f"grep -rn -E '{pattern2}' {_grep_excludes} "
                         f"{repo.path} 2>/dev/null | head -30",
                         timeout=15,
                     )
