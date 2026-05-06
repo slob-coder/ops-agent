@@ -113,10 +113,12 @@ class PatchGenerator:
         loc_text = self._render_locations(locations)
         diag_text = self._render_diagnosis(diagnosis)
         retry_text = retry_context.strip() if retry_context else "(首次尝试)"
+        file_contents = self._render_full_file_contents(locations, repo)
 
         return (tmpl
                 .replace("{diagnosis}", diag_text)
                 .replace("{source_locations}", loc_text)
+                .replace("{file_contents}", file_contents)
                 .replace("{repo_name}", repo.name if repo else "")
                 .replace("{repo_language}", getattr(repo, "language", "") or "")
                 .replace("{retry_context}", retry_text))
@@ -127,7 +129,10 @@ class PatchGenerator:
             "# 任务: 生成修复补丁\n\n"
             "你正在修复一个生产 bug。基于下面的诊断和源码,生成一个最小化的补丁。\n\n"
             "## 诊断\n{diagnosis}\n\n"
-            "## 涉及的源码\n{source_locations}\n\n"
+            "## 涉及的源码片段（定位参考）\n{source_locations}\n\n"
+            "## 需要修改的文件完整内容\n"
+            "以下是所有涉及文件的完整源码。**diff 中的行号、上下文行必须与这些文件内容完全一致。**\n"
+            "{file_contents}\n\n"
             "## 仓库\n名称: {repo_name}, 语言: {repo_language}\n\n"
             "## 上次尝试反馈\n{retry_context}\n\n"
             "## 输出格式(严格遵循)\n\n"
@@ -163,6 +168,49 @@ class PatchGenerator:
         for loc in locations[:5]:  # 受 limits.yaml max_source_locations 控制,由调用方截断
             parts.append(loc.render() if hasattr(loc, "render") else str(loc))
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _render_full_file_contents(locations, repo) -> str:
+        """读取并渲染涉及文件的完整内容，供 LLM 生成精确 diff
+
+        只有看到完整文件，LLM 才能写出正确的行号、上下文行和路径。
+        去重：同一个文件只读一次。截断过长文件（>500 行）。
+        """
+        if not locations or not repo:
+            return ""
+
+        MAX_LINES = 500
+        seen = set()
+        parts = []
+
+        for loc in locations[:5]:
+            local_file = getattr(loc, "local_file", "")
+            if not local_file or local_file in seen:
+                continue
+            seen.add(local_file)
+
+            # 计算仓库相对路径
+            repo_path = getattr(loc, "repo_path", "") or getattr(repo, "path", "")
+            if repo_path:
+                rel_path = os.path.relpath(local_file, repo_path)
+            else:
+                rel_path = os.path.basename(local_file)
+
+            try:
+                with open(local_file, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+            except (OSError, UnicodeError):
+                continue
+
+            if len(lines) > MAX_LINES:
+                content = "".join(lines[:MAX_LINES])
+                content += f"\n... (truncated, {len(lines)} total lines) ...\n"
+            else:
+                content = "".join(lines)
+
+            parts.append(f"### 完整文件: {rel_path} ({len(lines)} lines)\n```\n{content}\n```")
+
+        return "\n\n".join(parts) if parts else ""
 
     @staticmethod
     def _render_diagnosis(diagnosis) -> str:
