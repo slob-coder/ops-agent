@@ -224,11 +224,14 @@ class PatchGenerator:
         return patch
 
     def _extract_diff(self, response: str) -> str:
-        # 优先取标 diff 的代码块
+        # 收集所有 diff 代码块（LLM 可能输出多个文件各自的 diff）
+        diff_blocks = []
         for m in self._DIFF_RE.finditer(response):
             block = m.group(1)
             if "@@" in block and ("---" in block or "+++" in block):
-                return block.strip("\n") + "\n"
+                diff_blocks.append(block.strip("\n"))
+        if diff_blocks:
+            return "\n".join(diff_blocks) + "\n"
         # 退路:全文里找 unified diff 段落
         if "@@" in response and "---" in response:
             # 抓从第一个 --- 开始到末尾

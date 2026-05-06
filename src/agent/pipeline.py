@@ -327,6 +327,7 @@ class PipelineMixin:
                     frame=frame,
                     local_file=fpath,
                     repo_name=repo.name,
+                    repo_path=repo.path,
                     context_before="".join(before_lines).rstrip("\n"),
                     target_line=target_line.rstrip(),
                     context_after="".join(after_lines).rstrip("\n"),
