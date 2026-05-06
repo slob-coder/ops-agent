@@ -1454,7 +1454,7 @@ class PipelineMixin:
         is_normal = True
         if observations:
             assessment = self._assess(observations)
-            is_normal = assessment.get("severity") == "normal"
+            is_normal = assessment.get("status") == "NORMAL"
 
         if is_normal:
             self.chat.notify(
