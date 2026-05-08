@@ -699,9 +699,13 @@ Agent 按 ### 标题将观察源分层调度，**顺序即优先级**：
                     self.chat.say(
                         _("incident.type_action", rtype=rtype), "action"
                     )
-                    self._maybe_run_patch_loop(diagnosis)
+                    patch_deployed = self._maybe_run_patch_loop(diagnosis)
 
-                    state = "PLAN"
+                    if patch_deployed:
+                        # 补丁已成功部署并验证，跳过常规 PLAN/EXECUTE，直接进入 REFLECT
+                        state = "REFLECT"
+                    else:
+                        state = "PLAN"
 
             # ── PLAN ──
             elif state == "PLAN":

@@ -498,18 +498,19 @@ class PipelineMixin:
 
         return result
 
-    def _maybe_run_patch_loop(self, diagnosis: dict) -> None:
+    def _maybe_run_patch_loop(self, diagnosis: dict) -> bool:
         """Sprint 3: 如果诊断为 code_bug 且有源码定位,触发补丁生成 + 本地验证
 
-        失败/跳过都不会中断主流程。所有结果只写入当前 Incident 笔记。
+        返回 True 表示补丁已成功部署并验证，调用方应跳过常规 PLAN 流程。
+        返回 False 表示补丁跳过或失败，应继续走常规修复流程。
         """
         if not self.patch_loop or self.readonly:
-            return
+            return False
         if diagnosis.get("type") != "code_bug":
-            return
+            return False
         result = self._last_locate_result
         if not result or not result.locations:
-            return
+            return False
 
         # 重新搜索：用 diagnosis 的 hypothesis/facts 中的具体标识符搜索源码
         # diagnose 阶段的 source locator 可能定位到无关代码（如通用 "postgres" 匹配到
@@ -531,10 +532,10 @@ class PipelineMixin:
         repo = next((r for r in repos if r.name == repo_name), None)
         if not repo:
             self.chat.log(f"PatchLoop: 找不到 repo {repo_name},跳过")
-            return
+            return False
         if not getattr(repo, "build_cmd", ""):
             self.chat.log(f"PatchLoop: repo {repo_name} 未配置 build_cmd,跳过")
-            return
+            return False
 
         self.chat.say(t("pipeline.patch_bug_detected"), "info")
         try:
@@ -547,7 +548,7 @@ class PipelineMixin:
         except Exception as e:
             logger.exception("patch loop crashed")
             self.chat.say(t("pipeline.patch_loop_error", error=e), "warning")
-            return
+            return False
 
         if verified:
             note = (
@@ -568,8 +569,8 @@ class PipelineMixin:
                 t("pipeline.patch_verified", summary=verified.result.short_summary()), "success"
             )
             # 直接推送 + 部署（不走 PR 流程）
-            self._deploy_patch(verified, repo)
-            return
+            deploy_ok = self._deploy_patch(verified, repo)
+            return deploy_ok
         else:
             try:
                 self.notebook.append_to_incident(
@@ -579,6 +580,7 @@ class PipelineMixin:
             except Exception:
                 pass
             self.chat.say(t("pipeline.patch_failed"), "warning")
+            return False
 
     def _plan(self, diagnosis: dict):
         """制定修复方案（支持 COLLECT_MORE 多轮收集上下文）"""
@@ -1424,10 +1426,11 @@ class PipelineMixin:
     #  补丁部署（替代 PR 工作流的快速路径）
     # ═══════════════════════════════════════════════════════════
 
-    def _deploy_patch(self, verified, repo) -> None:
+    def _deploy_patch(self, verified, repo) -> bool:
         """补丁验证通过后：merge → push → deploy → 验证
 
-        每个环节失败都通知人类。
+        返回 True 表示补丁已成功部署并通过线上验证。
+        返回 False 表示任一环节失败（merge 冲突、push 失败、部署失败、验证失败）。
         """
         branch = verified.result.branch_name
         commit_sha = verified.result.commit_sha
@@ -1458,13 +1461,13 @@ class PipelineMixin:
                     t("pipeline.deploy_merge_conflict", branch=branch, main=main_branch, path=repo_path, desc=verified.patch.description),
                     "critical",
                 )
-                return
+                return False
         except Exception as e:
             self.chat.notify(
                 t("pipeline.deploy_branch_failed", error=e, branch=branch),
                 "critical",
             )
-            return
+            return False
 
         # ── 2. 推送 ──
         self.chat.say(t("pipeline.deploy_pushing"), "info")
@@ -1479,7 +1482,7 @@ class PipelineMixin:
                 t("pipeline.deploy_push_failed", error=e, branch=branch, desc=verified.patch.description),
                 "critical",
             )
-            return
+            return False
 
         # ── 3. 部署 ──
         deploy_cmd = getattr(repo, "deploy_cmd", "")
@@ -1488,7 +1491,7 @@ class PipelineMixin:
                 t("pipeline.deploy_no_cmd", path=repo_path, sha=commit_sha[:12], desc=verified.patch.description),
                 "warning",
             )
-            return
+            return False
 
         self.chat.say(t("pipeline.deploy_exec", cmd=deploy_cmd), "action")
         try:
@@ -1500,7 +1503,7 @@ class PipelineMixin:
                 "critical",
             )
             self._rollback_deployment(repo, main_branch, commit_sha, t("pipeline.deploy_failed", error=e))
-            return
+            return False
 
         # ── 4. 验证 ──
         self.chat.say(t("pipeline.deploy_verify_wait"), "info")
@@ -1538,6 +1541,8 @@ class PipelineMixin:
             )
         except Exception:
             pass
+
+        return is_normal
 
     def _rollback_deployment(self, repo, main_branch, original_sha, reason):
         """回滚部署：revert → push → redeploy → 通知人类"""
