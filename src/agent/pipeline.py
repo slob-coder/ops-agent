@@ -1521,7 +1521,9 @@ class PipelineMixin:
                 "success",
             )
             try:
-                self._close_incident(t("pipeline.close_auto_fix"))
+                # 不在此关闭 incident，由状态机 REFLECT 阶段统一关闭
+                # 这样避免 _reflect 被调用两次（一次在 _close_incident 内，一次在 REFLECT 状态）
+                self.chat.say(t("pipeline.close_auto_fix"), "success")
             except Exception:
                 pass
         else:
